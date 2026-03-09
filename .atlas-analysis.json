@@ -1,0 +1,144 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Polly",
+  "projectDescription": "A .NET resilience and transient-fault-handling library that allows developers to express policies such as Retry, Circuit Breaker, Timeout, Bulkhead Isolation, Rate Limiter, Hedging, and Fallback in a fluent and thread-safe manner.",
+  "theme": "aspen",
+  "primaryColor": "#E74856",
+  "lightColor": "#F25C68",
+  "darkColor": "#C73945",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/resilience-pipelines",
+              "concepts/resilience-strategies",
+              "concepts/resilience-context"
+            ]
+          },
+          {
+            "group": "Resilience Strategies",
+            "pages": [
+              "strategies/overview",
+              "strategies/retry",
+              "strategies/circuit-breaker",
+              "strategies/timeout",
+              "strategies/rate-limiter",
+              "strategies/fallback",
+              "strategies/hedging"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "advanced/dependency-injection",
+              "advanced/telemetry",
+              "advanced/testing",
+              "advanced/performance",
+              "advanced/pipeline-registry"
+            ]
+          },
+          {
+            "group": "Chaos Engineering",
+            "pages": [
+              "chaos/overview",
+              "chaos/fault-injection",
+              "chaos/latency-injection",
+              "chaos/outcome-injection",
+              "chaos/behavior-injection"
+            ]
+          },
+          {
+            "group": "Extensibility",
+            "pages": [
+              "extensibility/overview",
+              "extensibility/custom-reactive-strategy",
+              "extensibility/custom-proactive-strategy"
+            ]
+          },
+          {
+            "group": "Migration & Compatibility",
+            "pages": [
+              "migration/v8-migration-guide",
+              "migration/v7-compatibility"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core",
+            "pages": [
+              "api/polly-core",
+              "api/resilience-pipeline",
+              "api/resilience-pipeline-builder"
+            ]
+          },
+          {
+            "group": "Strategies",
+            "pages": [
+              "api/retry-strategy",
+              "api/circuit-breaker-strategy",
+              "api/timeout-strategy",
+              "api/rate-limiter-strategy",
+              "api/fallback-strategy",
+              "api/hedging-strategy"
+            ]
+          },
+          {
+            "group": "Extensions",
+            "pages": [
+              "api/polly-extensions",
+              "api/polly-rate-limiting",
+              "api/polly-testing"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Retry strategy with exponential backoff and jitter",
+    "Circuit breaker pattern for fault isolation",
+    "Timeout management for operations",
+    "Rate limiting with multiple algorithms",
+    "Fallback handlers for graceful degradation",
+    "Hedging for parallel execution",
+    "Chaos engineering capabilities",
+    "Fluent API with builder pattern",
+    "Dependency injection integration",
+    "Comprehensive telemetry support"
+  ],
+  "publicApiSurface": [
+    "ResiliencePipeline",
+    "ResiliencePipelineBuilder",
+    "RetryStrategyOptions",
+    "CircuitBreakerStrategyOptions",
+    "TimeoutStrategyOptions",
+    "RateLimiterStrategyOptions",
+    "FallbackStrategyOptions",
+    "HedgingStrategyOptions",
+    "AddRetry",
+    "AddCircuitBreaker",
+    "AddTimeout",
+    "AddRateLimiter",
+    "AddFallback",
+    "AddHedging",
+    "AddResiliencePipeline",
+    "ResiliencePipelineProvider",
+    "ResiliencePipelineRegistry"
+  ]
+}
