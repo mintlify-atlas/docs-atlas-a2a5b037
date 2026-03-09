@@ -1,0 +1,400 @@
+---
+title: V7 Compatibility
+description: How to use the Polly package to maintain backward compatibility with v7 APIs while migrating to v8
+---
+
+# V7 Compatibility
+
+Polly v8 maintains full backward compatibility with v7 through the main [Polly](https://www.nuget.org/packages/Polly) NuGet package. This allows you to upgrade to v8 and migrate your code gradually without breaking existing functionality.
+
+## Understanding the Package Structure
+
+Polly v8 introduces a new package structure to support both the new v8 APIs and legacy v7 APIs:
+
+### Polly.Core Package
+
+The [`Polly.Core`](https://www.nuget.org/packages/Polly.Core) package contains only the new v8 resilience pipeline APIs. This is the recommended package for new applications or after you have fully migrated from v7 to v8.
+
+**Features:**
+- New resilience pipeline API
+- Resilience strategies (retry, circuit breaker, timeout, etc.)
+- Built-in telemetry
+- Enhanced performance
+- No legacy v7 APIs
+
+### Polly Package
+
+The [`Polly`](https://www.nuget.org/packages/Polly) package includes everything from `Polly.Core` **plus** all the v7 policy APIs. This package is designed for migration scenarios.
+
+**Features:**
+- Everything from `Polly.Core`
+- Full v7 policy API (`IAsyncPolicy`, `ISyncPolicy`, etc.)
+- Interoperability between v7 and v8 APIs
+- Backward compatibility with existing v7 code
+
+<Info>
+The v7 API is still available and fully supported even when using the v8 version by referencing the **Polly** package.
+</Info>
+
+## Migration Strategy
+
+When migrating from v7 to v8, follow this recommended approach:
+
+### Step 1: Upgrade to Polly 8.x
+
+Upgrade your NuGet package reference from Polly 7.x to Polly 8.x:
+
+```xml
+<PackageReference Include="Polly" Version="8.0.0" />
+```
+
+Your existing v7 policies will continue to work without any code changes:
+
+```csharp
+// This v7 code continues to work with Polly 8.x
+IAsyncPolicy retryPolicy = Policy
+    .Handle<HttpRequestException>()
+    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)));
+
+await retryPolicy.ExecuteAsync(async () =>
+{
+    // Your code here
+});
+```
+
+### Step 2: Migrate Gradually
+
+Migrate your v7 policies to v8 strategies one at a time. Test each migration thoroughly before moving to the next.
+
+<CodeGroup>
+```csharp v7 Policy (Before)
+IAsyncPolicy<HttpResponseMessage> policy = Policy
+    .HandleResult<HttpResponseMessage>(r => !r.IsSuccessStatusCode)
+    .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(retryAttempt));
+
+var response = await policy.ExecuteAsync(async () =>
+{
+    return await httpClient.GetAsync("https://api.example.com/data");
+});
+```
+
+```csharp v8 Strategy (After)
+ResiliencePipeline<HttpResponseMessage> pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .HandleResult(r => !r.IsSuccessStatusCode),
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1),
+        BackoffType = DelayBackoffType.Linear
+    })
+    .Build();
+
+var response = await pipeline.ExecuteAsync(async token =>
+{
+    return await httpClient.GetAsync("https://api.example.com/data", token);
+}, cancellationToken);
+```
+</CodeGroup>
+
+### Step 3: Switch to Polly.Core
+
+Once you have successfully migrated all your v7 policies to v8 strategies, switch from the `Polly` package to `Polly.Core`:
+
+```xml
+<!-- Remove this -->
+<PackageReference Include="Polly" Version="8.0.0" />
+
+<!-- Add this -->
+<PackageReference Include="Polly.Core" Version="8.0.0" />
+```
+
+<Warning>
+Only switch to `Polly.Core` after you have removed all v7 API usage from your codebase. The `Polly.Core` package does not include the v7 APIs.
+</Warning>
+
+## Interoperability Features
+
+The `Polly` package provides extension methods that enable interoperability between v7 policies and v8 resilience pipelines.
+
+### Converting Resilience Pipelines to Policies
+
+You can convert v8 resilience pipelines to v7 policies using the `AsSyncPolicy()` and `AsAsyncPolicy()` extension methods:
+
+```csharp
+// Create a v8 resilience pipeline
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1)
+    })
+    .Build();
+
+// Convert to v7 policies
+ISyncPolicy syncPolicy = pipeline.AsSyncPolicy();
+IAsyncPolicy asyncPolicy = pipeline.AsAsyncPolicy();
+
+// Use the v7 policy in existing code
+await asyncPolicy.ExecuteAsync(async () =>
+{
+    // Your existing v7 code
+});
+```
+
+### Mixing v7 and v8 APIs
+
+You can mix v7 policies and v8 resilience pipelines in the same application:
+
+```csharp
+// v8 resilience pipeline
+ResiliencePipeline<HttpResponseMessage> retryPipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .HandleResult(r => !r.IsSuccessStatusCode),
+        MaxRetryAttempts = 3
+    })
+    .Build();
+
+// v7 timeout policy
+IAsyncPolicy<HttpResponseMessage> timeoutPolicy = Policy
+    .TimeoutAsync<HttpResponseMessage>(TimeSpan.FromSeconds(10));
+
+// Convert v8 pipeline to v7 policy for wrapping
+IAsyncPolicy<HttpResponseMessage> retryPolicy = retryPipeline.AsAsyncPolicy();
+
+// Wrap them together using v7 API
+IAsyncPolicy<HttpResponseMessage> combinedPolicy = Policy.WrapAsync(retryPolicy, timeoutPolicy);
+
+var response = await combinedPolicy.ExecuteAsync(async () =>
+{
+    return await httpClient.GetAsync("https://api.example.com/data");
+});
+```
+
+## When to Use Which Package
+
+### Use Polly Package When:
+
+- You are migrating from v7 to v8
+- You have existing v7 policies in your codebase
+- You need interoperability between v7 and v8 APIs
+- You want to upgrade to v8 without breaking changes
+
+### Use Polly.Core Package When:
+
+- You are starting a new project
+- You have fully migrated all v7 policies to v8 strategies
+- You don't need any v7 API compatibility
+- You want the smallest package footprint
+
+## Key Differences to Understand
+
+While the `Polly` package maintains backward compatibility, it's important to understand the key differences between v7 and v8:
+
+### API Philosophy
+
+<Tabs>
+  <Tab title="v7 Philosophy">
+    - Static factory methods (`Policy.Handle<>()`, `Policy.Timeout()`, etc.)
+    - Separate sync and async policies
+    - Policy wrapping for composition
+    - Direct context passing
+  </Tab>
+  <Tab title="v8 Philosophy">
+    - Instance-based builders (`ResiliencePipelineBuilder`)
+    - Unified sync/async support
+    - Built-in pipeline composition
+    - Context pooling for performance
+  </Tab>
+</Tabs>
+
+### Terminology
+
+| v7 Term | v8 Term |
+|:--------|:--------|
+| Policy | Strategy |
+| Policy Wrap | Resilience Pipeline |
+| `IAsyncPolicy` / `ISyncPolicy` | `ResiliencePipeline` |
+| `Context` | `ResilienceContext` |
+| Policy Registry | Resilience Pipeline Registry |
+
+### Feature Comparison
+
+| Feature | v7 | v8 |
+|:--------|:---|:---|
+| Retry | ✅ | ✅ |
+| Circuit Breaker | ✅ | ✅ (Advanced only) |
+| Timeout | ✅ | ✅ (Optimistic only) |
+| Bulkhead | ✅ | ✅ (As Concurrency Limiter) |
+| Rate Limiter | ✅ | ✅ (Uses System.Threading.RateLimiting) |
+| Fallback | ✅ | ✅ |
+| Cache | ✅ | ✅ |
+| Hedging | ❌ | ✅ |
+| Built-in Telemetry | ❌ | ✅ |
+| Chaos Engineering | Limited | ✅ (Polly.Testing) |
+
+## Common Migration Scenarios
+
+### Scenario 1: Web API with Retry and Circuit Breaker
+
+<CodeGroup>
+```csharp v7 Implementation
+public class OrderService
+{
+    private readonly IAsyncPolicy<HttpResponseMessage> _policy;
+    
+    public OrderService()
+    {
+        var retry = Policy
+            .HandleResult<HttpResponseMessage>(r => !r.IsSuccessStatusCode)
+            .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(retryAttempt));
+            
+        var circuitBreaker = Policy
+            .HandleResult<HttpResponseMessage>(r => !r.IsSuccessStatusCode)
+            .CircuitBreakerAsync(5, TimeSpan.FromSeconds(30));
+            
+        _policy = Policy.WrapAsync(retry, circuitBreaker);
+    }
+    
+    public async Task<Order> GetOrderAsync(string orderId)
+    {
+        var response = await _policy.ExecuteAsync(async () =>
+        {
+            return await httpClient.GetAsync($"/orders/{orderId}");
+        });
+        
+        return await response.Content.ReadFromJsonAsync<Order>();
+    }
+}
+```
+
+```csharp v8 Implementation
+public class OrderService
+{
+    private readonly ResiliencePipeline<HttpResponseMessage> _pipeline;
+    
+    public OrderService()
+    {
+        _pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .HandleResult(r => !r.IsSuccessStatusCode),
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromSeconds(1),
+                BackoffType = DelayBackoffType.Linear
+            })
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .HandleResult(r => !r.IsSuccessStatusCode),
+                FailureRatio = 0.5,
+                MinimumThroughput = 5,
+                BreakDuration = TimeSpan.FromSeconds(30)
+            })
+            .Build();
+    }
+    
+    public async Task<Order> GetOrderAsync(string orderId, CancellationToken cancellationToken)
+    {
+        var response = await _pipeline.ExecuteAsync(async token =>
+        {
+            return await httpClient.GetAsync($"/orders/{orderId}", token);
+        }, cancellationToken);
+        
+        return await response.Content.ReadFromJsonAsync<Order>(cancellationToken);
+    }
+}
+```
+</CodeGroup>
+
+### Scenario 2: Using Dependency Injection
+
+<CodeGroup>
+```csharp v7 DI Setup
+public void ConfigureServices(IServiceCollection services)
+{
+    var registry = new PolicyRegistry();
+    
+    var retryPolicy = Policy
+        .Handle<HttpRequestException>()
+        .WaitAndRetryAsync(3, retryAttempt => TimeSpan.FromSeconds(retryAttempt));
+        
+    registry.Add("RetryPolicy", retryPolicy);
+    
+    services.AddSingleton<IReadOnlyPolicyRegistry<string>>(registry);
+}
+```
+
+```csharp v8 DI Setup
+public void ConfigureServices(IServiceCollection services)
+{
+    services.AddResiliencePipeline("retry-pipeline", builder =>
+    {
+        builder.AddRetry(new RetryStrategyOptions
+        {
+            ShouldHandle = new PredicateBuilder().Handle<HttpRequestException>(),
+            MaxRetryAttempts = 3,
+            Delay = TimeSpan.FromSeconds(1),
+            BackoffType = DelayBackoffType.Linear
+        });
+    });
+}
+
+public class MyService
+{
+    private readonly ResiliencePipeline _pipeline;
+    
+    public MyService(ResiliencePipelineProvider<string> pipelineProvider)
+    {
+        _pipeline = pipelineProvider.GetPipeline("retry-pipeline");
+    }
+}
+```
+</CodeGroup>
+
+## Benefits of Migrating to v8
+
+While v7 compatibility is maintained, migrating to v8 provides several benefits:
+
+### Performance Improvements
+
+- **Context pooling** reduces allocations
+- **Zero-allocation APIs** for high-performance scenarios
+- **Optimized execution paths** for common scenarios
+
+### Enhanced Features
+
+- **Built-in telemetry** with OpenTelemetry support
+- **Hedging strategy** for parallel execution
+- **Chaos engineering** support via Polly.Testing
+- **Dynamic pipeline configuration** with hot reloading
+
+### Better Developer Experience
+
+- **Unified sync/async** execution with single pipeline
+- **Options-based configuration** for better IntelliSense
+- **Improved type safety** with generic builders
+- **Better testability** with dependency injection support
+
+## Additional Resources
+
+- [V8 Migration Guide](/migration/v8-migration-guide) - Complete migration guide with code examples
+- [Resilience Pipelines](/pipelines/index) - Understanding the new pipeline architecture
+- [Resilience Strategies](/strategies/index) - Overview of all available strategies
+- [Dependency Injection](/advanced/dependency-injection) - Using Polly v8 with DI
+
+## Support
+
+If you encounter issues during migration:
+
+1. Check the [Migration Guide](/migration/v8-migration-guide) for specific scenarios
+2. Review the [GitHub Discussions](https://github.com/App-vNext/Polly/discussions) for community support
+3. Report bugs via [GitHub Issues](https://github.com/App-vNext/Polly/issues)
+
+<Note>
+The v7 API will continue to be supported in the `Polly` package for the foreseeable future, allowing you to migrate at your own pace.
+</Note>

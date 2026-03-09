@@ -1,0 +1,368 @@
+---
+title: "ResiliencePipelineBuilder"
+description: "Build resilience pipelines with configurable strategies"
+---
+
+## Overview
+
+The `ResiliencePipelineBuilder` class is used to create instances of `ResiliencePipeline` by combining multiple resilience strategies. Strategies are executed in the order they were added to the builder.
+
+## Classes
+
+### ResiliencePipelineBuilder
+
+Builder for creating non-generic `ResiliencePipeline` instances.
+
+```csharp
+public sealed class ResiliencePipelineBuilder : ResiliencePipelineBuilderBase
+```
+
+### ResiliencePipelineBuilder\<TResult\>
+
+Builder for creating generic `ResiliencePipeline<TResult>` instances that handle specific result types.
+
+```csharp
+public sealed class ResiliencePipelineBuilder<TResult> : ResiliencePipelineBuilderBase
+```
+
+<ParamField path="TResult" type="Type">
+  The type of result the pipeline will handle.
+</ParamField>
+
+## Properties
+
+### Name
+
+```csharp
+public string? Name { get; set; }
+```
+
+<ParamField path="Name" type="string?">
+  The name of the builder. This property is included in telemetry produced by individual resilience strategies.
+  
+  Default value: `null`
+</ParamField>
+
+### InstanceName
+
+```csharp
+public string? InstanceName { get; set; }
+```
+
+<ParamField path="InstanceName" type="string?">
+  The instance name of the builder. Used to differentiate between multiple builder instances with the same `Name` in telemetry.
+  
+  Default value: `null`
+</ParamField>
+
+### TimeProvider
+
+```csharp
+public TimeProvider? TimeProvider { get; set; }
+```
+
+<ParamField path="TimeProvider" type="TimeProvider?">
+  A `TimeProvider` that is used by strategies that work with time (e.g., retry delays, timeouts).
+  
+  Default value: `null` (uses `TimeProvider.System`)
+</ParamField>
+
+### ContextPool
+
+```csharp
+public ResilienceContextPool? ContextPool { get; set; }
+```
+
+<ParamField path="ContextPool" type="ResilienceContextPool?">
+  The `ResilienceContextPool` associated with the builder. A custom pool can be used to configure custom behavior for context creation.
+  
+  Default value: `null` (uses `ResilienceContextPool.Shared`)
+</ParamField>
+
+### TelemetryListener
+
+```csharp
+public TelemetryListener? TelemetryListener { get; set; }
+```
+
+<ParamField path="TelemetryListener" type="TelemetryListener?">
+  The `TelemetryListener` that is used by Polly to report resilience events. This property is used by the telemetry infrastructure and should not be used directly by user code.
+  
+  Default value: `null`
+</ParamField>
+
+## Methods
+
+### Build
+
+```csharp
+// Non-generic builder
+public ResiliencePipeline Build()
+
+// Generic builder
+public ResiliencePipeline<TResult> Build()
+```
+
+Builds the resilience pipeline with all configured strategies.
+
+<ResponseField name="Returns" type="ResiliencePipeline" or="ResiliencePipeline<TResult>">
+  An instance of `ResiliencePipeline` or `ResiliencePipeline<TResult>`.
+</ResponseField>
+
+<ResponseField name="Throws" type="ValidationException">
+  Thrown when the builder has invalid configuration.
+</ResponseField>
+
+<Warning>
+  The builder cannot be reused after calling `Build()`. Attempting to add more strategies will throw an `InvalidOperationException`.
+</Warning>
+
+## Extension Methods
+
+### AddPipeline
+
+```csharp
+public static TBuilder AddPipeline<TBuilder>(
+    this TBuilder builder,
+    ResiliencePipeline pipeline)
+    where TBuilder : ResiliencePipelineBuilderBase
+
+public static ResiliencePipelineBuilder<TResult> AddPipeline<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    ResiliencePipeline<TResult> pipeline)
+```
+
+Adds an already created pipeline instance to the builder.
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance.
+</ParamField>
+
+<ParamField path="pipeline" type="ResiliencePipeline" or="ResiliencePipeline<TResult>" required>
+  The pipeline instance to add.
+</ParamField>
+
+<ResponseField name="Returns" type="TBuilder" or="ResiliencePipeline<TResult>">
+  The same builder instance for chaining.
+</ResponseField>
+
+<ResponseField name="Throws" type="ArgumentNullException">
+  Thrown when `pipeline` is `null`.
+</ResponseField>
+
+<ResponseField name="Throws" type="InvalidOperationException">
+  Thrown when the builder was already used to create a pipeline.
+</ResponseField>
+
+### AddStrategy
+
+```csharp
+// For proactive strategies
+public static TBuilder AddStrategy<TBuilder>(
+    this TBuilder builder,
+    Func<StrategyBuilderContext, ResilienceStrategy> factory,
+    ResilienceStrategyOptions options)
+    where TBuilder : ResiliencePipelineBuilderBase
+
+// For reactive strategies (non-generic builder)
+public static ResiliencePipelineBuilder AddStrategy(
+    this ResiliencePipelineBuilder builder,
+    Func<StrategyBuilderContext, ResilienceStrategy<object>> factory,
+    ResilienceStrategyOptions options)
+
+// For reactive strategies (generic builder)
+public static ResiliencePipelineBuilder<TResult> AddStrategy<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    Func<StrategyBuilderContext, ResilienceStrategy<TResult>> factory,
+    ResilienceStrategyOptions options)
+```
+
+Adds a resilience strategy to the builder.
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance.
+</ParamField>
+
+<ParamField path="factory" type="Func<StrategyBuilderContext, ResilienceStrategy>" required>
+  The factory that creates a resilience strategy.
+</ParamField>
+
+<ParamField path="options" type="ResilienceStrategyOptions" required>
+  The options associated with the strategy.
+</ParamField>
+
+<ResponseField name="Returns" type="TBuilder">
+  The same builder instance for chaining.
+</ResponseField>
+
+<ResponseField name="Throws" type="ArgumentNullException">
+  Thrown when `builder`, `factory`, or `options` is `null`.
+</ResponseField>
+
+<ResponseField name="Throws" type="InvalidOperationException">
+  Thrown when the builder was already used to create a pipeline.
+</ResponseField>
+
+<ResponseField name="Throws" type="ValidationException">
+  Thrown when `options` is invalid.
+</ResponseField>
+
+### AddStrategy (without options)
+
+```csharp
+// For proactive strategies
+public static TBuilder AddStrategy<TBuilder>(
+    this TBuilder builder,
+    Func<StrategyBuilderContext, ResilienceStrategy> factory)
+    where TBuilder : ResiliencePipelineBuilderBase
+
+// For reactive strategies (non-generic builder)
+public static ResiliencePipelineBuilder AddStrategy(
+    this ResiliencePipelineBuilder builder,
+    Func<StrategyBuilderContext, ResilienceStrategy<object>> factory)
+
+// For reactive strategies (generic builder)
+public static ResiliencePipelineBuilder<TResult> AddStrategy<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    Func<StrategyBuilderContext, ResilienceStrategy<TResult>> factory)
+```
+
+Adds a resilience strategy to the builder without explicit options.
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance.
+</ParamField>
+
+<ParamField path="factory" type="Func<StrategyBuilderContext, ResilienceStrategy>" required>
+  The factory that creates a resilience strategy.
+</ParamField>
+
+<ResponseField name="Returns" type="TBuilder">
+  The same builder instance for chaining.
+</ResponseField>
+
+## Example Usage
+
+### Basic Pipeline
+
+```csharp
+using Polly;
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1)
+    })
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
+
+await pipeline.ExecuteAsync(async ct =>
+{
+    await MakeHttpRequestAsync(ct);
+});
+```
+
+### Named Pipeline with Telemetry
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+{
+    Name = "my-api-client",
+    InstanceName = "production"
+}
+.AddRetry(new RetryStrategyOptions())
+.AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+.Build();
+```
+
+### Generic Pipeline for HTTP Responses
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => !r.IsSuccessStatusCode),
+        MaxRetryAttempts = 3,
+        BackoffType = DelayBackoffType.Exponential
+    })
+    .AddTimeout(TimeSpan.FromSeconds(30))
+    .Build();
+
+var response = await pipeline.ExecuteAsync(async ct =>
+{
+    return await httpClient.GetAsync(apiUrl, ct);
+});
+```
+
+### Composing Multiple Pipelines
+
+```csharp
+// Create a base pipeline for common strategies
+var basePipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions())
+    .Build();
+
+// Create a specialized pipeline that includes the base
+var specializedPipeline = new ResiliencePipelineBuilder()
+    .AddPipeline(basePipeline)
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+    .AddTimeout(TimeSpan.FromSeconds(5))
+    .Build();
+```
+
+### Custom Strategy
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddStrategy(context => new CustomResilienceStrategy(),
+        new ResilienceStrategyOptions
+        {
+            Name = "custom-strategy"
+        })
+    .Build();
+```
+
+### Using Custom TimeProvider for Testing
+
+```csharp
+using Microsoft.Extensions.Time.Testing;
+
+var fakeTimeProvider = new FakeTimeProvider();
+
+var pipeline = new ResiliencePipelineBuilder
+{
+    TimeProvider = fakeTimeProvider
+}
+.AddRetry(new RetryStrategyOptions
+{
+    Delay = TimeSpan.FromSeconds(5)
+})
+.Build();
+
+// In tests, you can control time
+fakeTimeProvider.Advance(TimeSpan.FromSeconds(5));
+```
+
+## Strategy Execution Order
+
+Strategies are executed in the order they are added to the builder. The first strategy added wraps all subsequent strategies.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions())      // Executes first (outermost)
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions()) // Executes second
+    .AddTimeout(TimeSpan.FromSeconds(10))      // Executes third (innermost)
+    .Build();
+```
+
+In this example:
+1. Retry wraps everything - if the circuit breaker or timeout fails, retry can attempt again
+2. Circuit breaker wraps timeout - protects against repeated timeout failures
+3. Timeout wraps the actual operation - ensures individual attempts don't take too long
+
+<Tip>
+  The order of strategies matters significantly. Generally, you want retry as the outermost layer, followed by circuit breaker, then timeout or rate limiter for the innermost layers.
+</Tip>

@@ -1,0 +1,548 @@
+---
+title: Fallback Strategy
+description: Provide substitute values or actions when operations fail
+---
+
+# Fallback Strategy
+
+The fallback **reactive** resilience strategy provides a substitute if the execution of the callback fails. Failure can be either an `Exception` or a result object indicating unsuccessful processing.
+
+<Tip>
+  Typically, fallback is used as a last resort - if all other strategies failed to overcome the transient failure, you can still provide a fallback value to the caller.
+</Tip>
+
+## When to Use Fallback
+
+Use the fallback strategy when:
+
+- You can provide a sensible default value when operations fail
+- Cached data can be used instead of fresh data
+- Degraded functionality is acceptable over complete failure
+- You want to call an alternative service or endpoint
+- Graceful degradation is more important than complete accuracy
+
+## Installation
+
+```bash
+dotnet add package Polly.Core
+```
+
+## Usage
+
+### Basic Fallback with Constant Value
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<UserAvatar>()
+    .AddFallback(new FallbackStrategyOptions<UserAvatar>
+    {
+        ShouldHandle = new PredicateBuilder<UserAvatar>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => r is null),
+        FallbackAction = static args => 
+            Outcome.FromResultAsValueTask(UserAvatar.GetDefault())
+    })
+    .Build();
+
+var avatar = await pipeline.ExecuteAsync(async ct => 
+{
+    return await FetchUserAvatarAsync(userId, ct);
+}, cancellationToken);
+```
+
+### Dynamic Fallback Value
+
+```csharp
+var options = new FallbackStrategyOptions<UserAvatar>
+{
+    ShouldHandle = new PredicateBuilder<UserAvatar>()
+        .Handle<HttpRequestException>()
+        .HandleResult(r => r is null),
+    FallbackAction = static args =>
+    {
+        // Generate dynamic fallback based on context
+        var avatar = UserAvatar.GenerateRandomAvatar();
+        return Outcome.FromResultAsValueTask(avatar);
+    }
+};
+```
+
+### Fallback with Cached Data
+
+```csharp
+var cache = new MemoryCache(new MemoryCacheOptions());
+var cacheKey = new ResiliencePropertyKey<string>("CacheKey");
+
+var options = new FallbackStrategyOptions<WeatherData>
+{
+    ShouldHandle = new PredicateBuilder<WeatherData>()
+        .Handle<HttpRequestException>()
+        .Handle<TimeoutRejectedException>(),
+    FallbackAction = args =>
+    {
+        // Try to get from cache
+        var key = args.Context.Properties.GetValue(cacheKey, "default");
+        
+        if (cache.TryGetValue(key, out WeatherData cachedData))
+        {
+            Console.WriteLine("Using cached data");
+            return Outcome.FromResultAsValueTask(cachedData);
+        }
+        
+        // Return default if cache miss
+        return Outcome.FromResultAsValueTask(WeatherData.GetDefault());
+    }
+};
+```
+
+### Fallback with OnFallback Event
+
+```csharp
+var options = new FallbackStrategyOptions<string>
+{
+    ShouldHandle = new PredicateBuilder<string>()
+        .Handle<Exception>(),
+    FallbackAction = static args => 
+        Outcome.FromResultAsValueTask("Default value"),
+    OnFallback = static args =>
+    {
+        // Log the fallback
+        Console.WriteLine($"Fallback triggered: {args.Outcome.Exception?.Message}");
+        
+        // Send metrics
+        // Alert monitoring system
+        
+        return default;
+    }
+};
+```
+
+### Fallback to Alternative Service
+
+```csharp
+var options = new FallbackStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+        .Handle<HttpRequestException>()
+        .HandleResult(r => !r.IsSuccessStatusCode),
+    FallbackAction = async args =>
+    {
+        // Call backup service
+        Console.WriteLine("Primary service failed, trying backup...");
+        
+        try
+        {
+            var response = await httpClient.GetAsync(
+                backupServiceUrl, 
+                args.Context.CancellationToken);
+            
+            return Outcome.FromResult(response);
+        }
+        catch (Exception ex)
+        {
+            return Outcome.FromException<HttpResponseMessage>(ex);
+        }
+    }
+};
+```
+
+## Configuration Options
+
+<ParamField path="ShouldHandle" type="Predicate" default="Any exceptions except OperationCanceledException">
+  Defines which results and/or exceptions should trigger the fallback.
+</ParamField>
+
+<ParamField path="FallbackAction" type="Func<FallbackActionArguments, Outcome<TResult>>" required>
+  Delegate that calculates the substitute value. Can access the outcome and context to make decisions.
+</ParamField>
+
+<ParamField path="OnFallback" type="Func<OnFallbackArguments, ValueTask>" default="null">
+  Invoked before the strategy returns the fallback value. Useful for logging and metrics.
+</ParamField>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use fallback as the outermost strategy">
+    Place fallback outside other strategies so it catches all failures:
+    
+    ```csharp
+    var pipeline = new ResiliencePipelineBuilder<string>()
+        .AddFallback(fallbackOptions)  // Outer layer
+        .AddRetry(retryOptions)
+        .AddCircuitBreaker(circuitBreakerOptions)
+        .Build();
+    ```
+  </Accordion>
+  
+  <Accordion title="Provide contextually appropriate fallbacks">
+    Don't return generic defaults. Consider the context:
+    
+    ```csharp
+    FallbackAction = args =>
+    {
+        var isAdmin = args.Context.Properties
+            .GetValue(isAdminKey, false);
+        
+        var fallback = isAdmin 
+            ? AdminData.GetDefault() 
+            : UserData.GetDefault();
+        
+        return Outcome.FromResultAsValueTask(fallback);
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Consider using cached data">
+    Stale data is often better than no data. Implement cache-aside pattern with fallback.
+  </Accordion>
+  
+  <Accordion title="Log fallback occurrences">
+    Always log when fallback is used to track system health:
+    
+    ```csharp
+    OnFallback = args =>
+    {
+        logger.LogWarning(
+            "Fallback triggered for {Operation}. Reason: {Reason}",
+            args.Context.OperationKey,
+            args.Outcome.Exception?.Message ?? "Result failure");
+        return default;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Don't hide persistent failures">
+    If fallback is frequently triggered, it might indicate a persistent problem. Monitor fallback rates and alert on trends.
+  </Accordion>
+</AccordionGroup>
+
+## Common Patterns
+
+### Fallback After Retries
+
+```csharp
+var predicateBuilder = new PredicateBuilder<HttpResponseMessage>()
+    .Handle<HttpRequestException>()
+    .HandleResult(r => !r.IsSuccessStatusCode);
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddFallback(new FallbackStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = predicateBuilder,
+        FallbackAction = args =>
+        {
+            // Return cached response after all retries failed
+            var cachedResponse = GetFromCache(args.Context);
+            return Outcome.FromResultAsValueTask(cachedResponse);
+        }
+    })
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = predicateBuilder,
+        MaxRetryAttempts = 3
+    })
+    .Build();
+```
+
+### Primary-Secondary Endpoint Pattern
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddFallback(new FallbackStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => r.StatusCode == HttpStatusCode.ServiceUnavailable),
+        FallbackAction = async args =>
+        {
+            // Call secondary endpoint
+            try
+            {
+                var response = await httpClient.GetAsync(
+                    secondaryUrl, 
+                    args.Context.CancellationToken);
+                return Outcome.FromResult(response);
+            }
+            catch (Exception ex)
+            {
+                return Outcome.FromException<HttpResponseMessage>(ex);
+            }
+        }
+    })
+    .Build();
+
+// Call primary endpoint
+var response = await pipeline.ExecuteAsync(
+    async ct => await httpClient.GetAsync(primaryUrl, ct),
+    cancellationToken);
+```
+
+### Fallback with Quality Indicators
+
+```csharp
+public class DataResult<T>
+{
+    public T Value { get; set; }
+    public bool IsFallback { get; set; }
+    public DateTime? CacheTime { get; set; }
+}
+
+var pipeline = new ResiliencePipelineBuilder<DataResult<WeatherData>>()
+    .AddFallback(new FallbackStrategyOptions<DataResult<WeatherData>>
+    {
+        ShouldHandle = new PredicateBuilder<DataResult<WeatherData>>()
+            .Handle<Exception>(),
+        FallbackAction = args =>
+        {
+            var cached = cache.Get<WeatherData>("weather");
+            var result = new DataResult<WeatherData>
+            {
+                Value = cached ?? WeatherData.GetDefault(),
+                IsFallback = true,
+                CacheTime = cache.GetCacheTime("weather")
+            };
+            return Outcome.FromResultAsValueTask(result);
+        }
+    })
+    .Build();
+
+var result = await pipeline.ExecuteAsync(async ct =>
+{
+    var data = await weatherService.GetCurrentWeatherAsync(ct);
+    return new DataResult<WeatherData> 
+    { 
+        Value = data, 
+        IsFallback = false 
+    };
+}, cancellationToken);
+
+if (result.IsFallback)
+{
+    Console.WriteLine($"Using fallback data from {result.CacheTime}");
+}
+```
+
+## Examples
+
+### User Profile with Fallback
+
+```csharp
+public class UserProfileService
+{
+    private readonly HttpClient _httpClient;
+    private readonly IMemoryCache _cache;
+    private readonly ResiliencePipeline<UserProfile> _pipeline;
+
+    public UserProfileService(HttpClient httpClient, IMemoryCache cache)
+    {
+        _httpClient = httpClient;
+        _cache = cache;
+        
+        _pipeline = new ResiliencePipelineBuilder<UserProfile>()
+            .AddFallback(new FallbackStrategyOptions<UserProfile>
+            {
+                ShouldHandle = new PredicateBuilder<UserProfile>()
+                    .Handle<HttpRequestException>()
+                    .Handle<TimeoutRejectedException>(),
+                FallbackAction = args =>
+                {
+                    var userId = args.Context.Properties
+                        .GetValue(userIdKey, "unknown");
+                    
+                    // Try cache first
+                    if (_cache.TryGetValue(userId, out UserProfile cached))
+                    {
+                        return Outcome.FromResultAsValueTask(cached);
+                    }
+                    
+                    // Return anonymous profile
+                    return Outcome.FromResultAsValueTask(
+                        UserProfile.GetAnonymous());
+                },
+                OnFallback = args =>
+                {
+                    Console.WriteLine("Using fallback profile");
+                    return default;
+                }
+            })
+            .AddRetry(new RetryStrategyOptions<UserProfile>
+            {
+                MaxRetryAttempts = 2,
+                Delay = TimeSpan.FromSeconds(1)
+            })
+            .AddTimeout(TimeSpan.FromSeconds(5))
+            .Build();
+    }
+
+    public async Task<UserProfile> GetProfileAsync(
+        string userId, 
+        CancellationToken ct)
+    {
+        var context = ResilienceContextPool.Shared.Get(ct);
+        context.Properties.Set(userIdKey, userId);
+        
+        try
+        {
+            return await _pipeline.ExecuteAsync(async (ctx, state) =>
+            {
+                var response = await _httpClient.GetAsync(
+                    $"https://api.example.com/users/{state}", 
+                    ctx.CancellationToken);
+                
+                response.EnsureSuccessStatusCode();
+                
+                var profile = await response.Content
+                    .ReadFromJsonAsync<UserProfile>(ctx.CancellationToken);
+                
+                // Cache successful result
+                _cache.Set(state, profile, TimeSpan.FromMinutes(5));
+                
+                return profile;
+            }, context, userId);
+        }
+        finally
+        {
+            ResilienceContextPool.Shared.Return(context);
+        }
+    }
+}
+```
+
+### Configuration Service with Fallback
+
+```csharp
+public class ConfigurationService
+{
+    private readonly ResiliencePipeline<AppConfig> _pipeline;
+    private AppConfig _lastKnownGoodConfig;
+
+    public ConfigurationService()
+    {
+        _pipeline = new ResiliencePipelineBuilder<AppConfig>()
+            .AddFallback(new FallbackStrategyOptions<AppConfig>
+            {
+                ShouldHandle = new PredicateBuilder<AppConfig>()
+                    .Handle<Exception>(),
+                FallbackAction = args =>
+                {
+                    // Use last known good configuration
+                    if (_lastKnownGoodConfig != null)
+                    {
+                        Console.WriteLine("Using last known good config");
+                        return Outcome.FromResultAsValueTask(
+                            _lastKnownGoodConfig);
+                    }
+                    
+                    // Use embedded defaults
+                    Console.WriteLine("Using default config");
+                    return Outcome.FromResultAsValueTask(
+                        AppConfig.GetDefaults());
+                }
+            })
+            .AddRetry(new RetryStrategyOptions<AppConfig>
+            {
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromSeconds(2)
+            })
+            .Build();
+    }
+
+    public async Task<AppConfig> LoadConfigAsync(CancellationToken ct)
+    {
+        var config = await _pipeline.ExecuteAsync(async token =>
+        {
+            // Load from remote configuration service
+            var json = await File.ReadAllTextAsync(
+                "config.json", token);
+            return JsonSerializer.Deserialize<AppConfig>(json);
+        }, ct);
+        
+        // Update last known good
+        _lastKnownGoodConfig = config;
+        
+        return config;
+    }
+}
+```
+
+### Multi-Region Fallback
+
+```csharp
+public class MultiRegionService
+{
+    private readonly HttpClient _httpClient;
+    private readonly string[] _regionEndpoints = 
+    {
+        "https://us-east.api.example.com",
+        "https://us-west.api.example.com",
+        "https://eu-west.api.example.com"
+    };
+    
+    private int _currentRegionIndex = 0;
+
+    public async Task<HttpResponseMessage> GetDataAsync(CancellationToken ct)
+    {
+        var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddFallback(new FallbackStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .Handle<HttpRequestException>()
+                    .HandleResult(r => !r.IsSuccessStatusCode),
+                FallbackAction = async args =>
+                {
+                    // Try next region
+                    _currentRegionIndex = (_currentRegionIndex + 1) % _regionEndpoints.Length;
+                    var fallbackUrl = _regionEndpoints[_currentRegionIndex];
+                    
+                    Console.WriteLine($"Failing over to {fallbackUrl}");
+                    
+                    try
+                    {
+                        var response = await _httpClient.GetAsync(
+                            fallbackUrl, 
+                            args.Context.CancellationToken);
+                        return Outcome.FromResult(response);
+                    }
+                    catch (Exception ex)
+                    {
+                        return Outcome.FromException<HttpResponseMessage>(ex);
+                    }
+                }
+            })
+            .Build();
+
+        return await pipeline.ExecuteAsync(async token =>
+        {
+            var primaryUrl = _regionEndpoints[_currentRegionIndex];
+            return await _httpClient.GetAsync(primaryUrl, token);
+        }, ct);
+    }
+}
+```
+
+<Accordion title="When should I use Fallback vs Retry?">
+  - **Retry**: When you want to attempt the same operation again, hoping it will succeed
+  - **Fallback**: When you want to provide an alternative value or call a different operation
+  
+  Often used together: Retry first, then fallback if all retries fail.
+</Accordion>
+
+<Accordion title="Can fallback return a different type?">
+  No, the fallback must return the same type as the original operation. However, you can use wrapper types that indicate whether the result is primary or fallback data.
+</Accordion>
+
+<Accordion title="Should I always provide a fallback?">
+  No. Only use fallback when:
+  - You have a sensible default or cached value
+  - Degraded functionality is acceptable
+  - You can call an alternative service
+  
+  Some failures should propagate to the caller.
+</Accordion>
+
+<Accordion title="How do I indicate that fallback data was used?">
+  Options:
+  1. Return a wrapper type with a flag (e.g., `DataResult<T>` with `IsFallback` property)
+  2. Set a value in `ResilienceContext.Properties`
+  3. Use `OnFallback` to log or emit metrics
+</Accordion>

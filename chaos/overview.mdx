@@ -1,0 +1,262 @@
+---
+title: Chaos Engineering
+description: Test your application's resilience by injecting controlled failures with Simmy
+---
+
+**Chaos engineering** is the discipline of experimenting on a system in order to build confidence in the system's capability to withstand turbulent conditions in production.
+
+If you want to learn more about chaos engineering:
+
+- [Chaos engineering on Wikipedia](https://en.wikipedia.org/wiki/Chaos_engineering): Describes the basic concepts, history and tools related to chaos engineering.
+- [Chaos engineering, the history, principles and practices](https://www.gremlin.com/community/tutorials/chaos-engineering-the-history-principles-and-practice/): Excellent article about chaos engineering by Gremlin, a chaos engineering platform.
+- [Understanding chaos engineering and resilience](https://learn.microsoft.com/azure/chaos-studio/chaos-studio-chaos-engineering-overview): Intro to chaos engineering in the context of Azure Chaos Studio, managed service that uses chaos engineering to help you measure, understand, and improve your cloud application and service resilience.
+
+## Chaos engineering with Simmy
+
+[Simmy](https://github.com/Polly-Contrib/Simmy) is a major new addition to Polly library starting with **v8.3.0**, adding a chaos engineering and fault-injection dimension to Polly, through the provision of strategies to selectively inject faults, latency, custom behavior or fake results.
+
+<Info>
+Chaos strategies are seamlessly integrated into Polly v8's resilience pipeline architecture, allowing you to combine them with retry, circuit breaker, timeout, and other resilience strategies.
+</Info>
+
+## Basic usage
+
+Here's how to configure chaos strategies in your resilience pipeline:
+
+```csharp
+var builder = new ResiliencePipelineBuilder<HttpResponseMessage>();
+
+// First, configure regular resilience strategies
+builder
+    .AddConcurrencyLimiter(10, 100)
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage> { /* configure options */ })
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions<HttpResponseMessage> { /* configure options */ })
+    .AddTimeout(TimeSpan.FromSeconds(5));
+
+// Finally, configure chaos strategies if you want to inject chaos.
+// These should come after the regular resilience strategies.
+
+// 2% of all requests will be injected with chaos fault.
+const double FaultInjectionRate = 0.02;
+// For the remaining 98% of total requests, 50% of them will be injected with latency. Then 49% of total request will be injected with chaos latency.
+// Latency injection does not return early.
+const double LatencyInjectionRate = 0.50;
+// For the remaining 98% of total requests, 10% of them will be injected with outcome. Then 9.8% of total request will be injected with chaos outcome.
+const double OutcomeInjectionRate = 0.10;
+// For the remaining 88.2% of total requests, 1% of them will be injected with behavior. Then 0.882% of total request will be injected with chaos behavior.
+const double BehaviorInjectionRate = 0.01;
+
+builder
+    .AddChaosFault(FaultInjectionRate, () => new InvalidOperationException("Injected by chaos strategy!")) // Inject a chaos fault to executions
+    .AddChaosLatency(LatencyInjectionRate, TimeSpan.FromMinutes(1)) // Inject a chaos latency to executions
+    .AddChaosOutcome(OutcomeInjectionRate, () => new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)) // Inject a chaos outcome to executions
+    .AddChaosBehavior(BehaviorInjectionRate, cancellationToken => RestartRedisAsync(cancellationToken)); // Inject a chaos behavior to executions
+```
+
+<Warning>
+It is usual to place the chaos strategy as the last strategy in the resilience pipeline. By placing the chaos strategies last, they subvert the usual outbound call at the last minute, substituting their fault or adding extra latency, etc. The existing resilience strategies - further out in the pipeline - still apply, so you can test how the Polly resilience strategies you have configured handle the chaos/faults injected by Simmy.
+</Warning>
+
+<Note>
+The `AddChaosFault`, `AddChaosLatency`, `AddChaosOutcome`, and `AddChaosBehavior` will take effect sequentially if you combine them together. In the above example, we use **fault first then latency strategy**, which can save fault waiting time. If you put `AddChaosLatency` before `AddChaosFault`, you will get different behavior.
+</Note>
+
+## Built-in chaos strategies
+
+| Strategy | Type | What does the strategy do? |
+|----------|------|----------------------------|
+| [Fault](/chaos/fault-injection) | Proactive | Injects exceptions in your system. |
+| [Outcome](/chaos/outcome-injection) | Reactive | Injects fake outcomes (results or exceptions) in your system. |
+| [Latency](/chaos/latency-injection) | Proactive | Injects latency into executions before the calls are made. |
+| [Behavior](/chaos/behavior-injection) | Proactive | Allows you to inject *any* extra behavior, before a call is placed. |
+
+## Common options across strategies
+
+All chaos strategies share these configuration options:
+
+| Property | Default Value | Description |
+|----------|---------------|-------------|
+| `InjectionRate` | 0.001 | A decimal between 0 and 1 inclusive. The strategy will inject the chaos, randomly, that proportion of the time, e.g.: if 0.2, twenty percent of calls will be randomly affected; if 0.01, one percent of calls; if 1, all calls. |
+| `InjectionRateGenerator` | `null` | Generates the injection rate for a given execution, which the value should be between [0, 1] (inclusive). |
+| `Enabled` | `true` | Determines whether the strategy is enabled or not. |
+| `EnabledGenerator` | `null` | The generator that indicates whether the chaos strategy is enabled for a given execution. |
+
+<Warning>
+With the V8 API, chaos strategies are **enabled by default**. You can opt-out of them one-by-one either via the `Enabled` or via the `EnabledGenerator` property. In previous Simmy versions you had to explicitly enable chaos policies.
+</Warning>
+
+<Note>
+- If both `InjectionRate` and `InjectionRateGenerator` are specified then `InjectionRate` will be ignored.
+- If both `Enabled` and `EnabledGenerator` are specified then `Enabled` will be ignored.
+</Note>
+
+## Major differences from Polly.Contrib.Simmy
+
+This section highlights the major differences compared to the [`Polly.Contrib.Simmy`](https://github.com/Polly-Contrib/Simmy) library:
+
+- **From `MonkeyPolicy` to `ChaosStrategy`**: We've updated the terminology from `Monkey` to `Chaos` to better align with the well-recognized principles of *chaos engineering*.
+- **Unified configuration options**: The `InjectOptionsBase` and `InjectOptionsAsyncBase` are now consolidated into `ChaosStrategyOptions`. This change brings Simmy in line with the Polly v8 API, offering built-in support for options-based configuration and seamless integration of synchronous and asynchronous executions.
+- **Chaos strategies enabled by default**: Adding a chaos strategy (previously known as monkey policy) now means it's active right away. This is a departure from earlier versions, where the monkey policy had to be explicitly enabled.
+- **API changes**: The new version of Simmy introduces several API updates:
+
+| From | To |
+|------|----|
+| `InjectException` | `AddChaosFault` |
+| `InjectResult` | `AddChaosOutcome` |
+| `InjectBehavior` | `AddChaosBehavior` |
+| `InjectLatency` | `AddChaosLatency` |
+
+- **Sync and async unification**: Before, Simmy had various methods to set policies like `InjectLatency`, `InjectLatencyAsync`, `InjectLatency<T>`, and `InjectLatencyAsync<T>`. With the new version based on Polly v8, these methods have been combined into a single `AddChaosLatency` extension that works for both `ResiliencePipelineBuilder` and `ResiliencePipelineBuilder<T>`. These rules are covering all types of chaos strategies (Outcome, Fault, Latency, and Behavior).
+
+## Inject chaos selectively
+
+You can dynamically adjust the frequency and timing of chaos injection. For instance, in pre-production and test environments, it's sensible to consistently inject chaos. This proactive approach helps in preparing for potential failures. In production environments, however, you may prefer to limit chaos to certain users and tenants, ensuring that regular users remain unaffected.
+
+<Warning>
+When simulating extreme scenarios by setting the injection rate to **1.0 (100%)**, exercise caution by restricting it to a subset of tenants and users to avoid rendering the system unusable for regular users.
+</Warning>
+
+Here's how to configure chaos strategies to enable selective injection:
+
+```csharp
+services.AddResiliencePipeline("chaos-pipeline", (builder, context) =>
+{
+    var environment = context.ServiceProvider.GetRequiredService<IHostEnvironment>();
+
+    builder.AddChaosFault(new ChaosFaultStrategyOptions
+    {
+        EnabledGenerator = args =>
+        {
+            // Enable chaos in development and staging environments.
+            if (environment.IsDevelopment() || environment.IsStaging())
+            {
+                return ValueTask.FromResult(true);
+            }
+
+            // Enable chaos for specific users or tenants, even in production environments.
+            if (ShouldEnableChaos(args.Context))
+            {
+                return ValueTask.FromResult(true);
+            }
+
+            return ValueTask.FromResult(false);
+        },
+        InjectionRateGenerator = args =>
+        {
+            if (environment.IsStaging())
+            {
+                // 1% chance of failure on staging environments.
+                return ValueTask.FromResult(0.01);
+            }
+
+            if (environment.IsDevelopment())
+            {
+                // 5% chance of failure on development environments.
+                return ValueTask.FromResult(0.05);
+            }
+
+            // The context can carry information to help determine the injection rate.
+            // For instance, in production environments, you might have certain test users or tenants
+            // for whom you wish to inject chaos.
+            if (ResolveInjectionRate(args.Context, out double injectionRate))
+            {
+                return ValueTask.FromResult(injectionRate);
+            }
+
+            // No chaos on production environments.
+            return ValueTask.FromResult(0.0);
+        },
+        FaultGenerator = new FaultGenerator()
+            .AddException<TimeoutException>()
+            .AddException<HttpRequestException>()
+    });
+});
+```
+
+### Centralize chaos management
+
+We recommend encapsulating the chaos decisions and injection rate in a shared class, such as `IChaosManager`:
+
+```csharp
+public interface IChaosManager
+{
+    ValueTask<bool> IsChaosEnabled(ResilienceContext context);
+
+    ValueTask<double> GetInjectionRate(ResilienceContext context);
+}
+```
+
+This approach allows you to consistently apply and manage chaos-related settings across various chaos strategies:
+
+```csharp
+services.AddResiliencePipeline("chaos-pipeline", (builder, context) =>
+{
+    var chaosManager = context.ServiceProvider.GetRequiredService<IChaosManager>();
+
+    builder
+        .AddChaosFault(new ChaosFaultStrategyOptions
+        {
+            EnabledGenerator = args => chaosManager.IsChaosEnabled(args.Context),
+            InjectionRateGenerator = args => chaosManager.GetInjectionRate(args.Context),
+            FaultGenerator = new FaultGenerator()
+                .AddException<TimeoutException>()
+                .AddException<HttpRequestException>()
+        })
+        .AddChaosLatency(new ChaosLatencyStrategyOptions
+        {
+            EnabledGenerator = args => chaosManager.IsChaosEnabled(args.Context),
+            InjectionRateGenerator = args => chaosManager.GetInjectionRate(args.Context),
+            Latency = TimeSpan.FromSeconds(60)
+        });
+});
+```
+
+<Tip>
+An alternative method involves using [`Microsoft.Extensions.AsyncState`](https://www.nuget.org/packages/Microsoft.Extensions.AsyncState) for storing information relevant to chaos injection decisions. This can be particularly useful in frameworks like ASP.NET Core. For instance, you could implement a middleware that retrieves user information from `HttpContext`, assesses the user type, and then stores this data in `IAsyncContext<ChaosUser>`. Subsequently, `IChaosManager` can access `IAsyncContext<ChaosUser>` to retrieve this information.
+</Tip>
+
+## Telemetry
+
+The telemetry of chaos strategies is seamlessly integrated with Polly's telemetry infrastructure. The chaos strategies produce the following information events:
+
+- `Chaos.OnFault` - Reported when a fault is injected
+- `Chaos.OnOutcome` - Reported when an outcome is injected
+- `Chaos.OnLatency` - Reported when latency is injected
+- `Chaos.OnBehavior` - Reported when a behavior is injected
+
+All chaos telemetry events are reported with `Information` severity.
+
+## Motivation
+
+There are a lot of questions when it comes to chaos engineering and making sure that a system is actually ready to face the worst possible scenarios:
+
+- Is my system resilient enough?
+- Am I handling the right exceptions/scenarios?
+- How will my system behave if X happens?
+- How can I test without waiting for a handled (or even unhandled) exception to happen in my production environment?
+
+Using Polly helps introduce resilience to a project, but we don't want to have to wait for expected or unexpected failures to test it out. A resilience strategy could be wrongly implemented; testing the scenarios is not straightforward; and mocking failure of some dependencies (for example a cloud SaaS or PaaS service) is not always straightforward.
+
+### What is needed to simulate chaotic scenarios?
+
+- A way to simulate failures of dependencies (any service dependency for example).
+- Define when to fail based on some external factors - maybe global configuration or some rule.
+- A way to revert easily, to control the blast radius.
+- To be production grade, to run this in a production or near-production system with automation.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Fault Injection" icon="bomb" href="/chaos/fault-injection">
+    Inject exceptions to test error handling
+  </Card>
+  <Card title="Latency Injection" icon="clock" href="/chaos/latency-injection">
+    Add delays to simulate slow operations
+  </Card>
+  <Card title="Outcome Injection" icon="bullseye" href="/chaos/outcome-injection">
+    Inject fake results or responses
+  </Card>
+  <Card title="Behavior Injection" icon="code" href="/chaos/behavior-injection">
+    Execute custom behavior before operations
+  </Card>
+</CardGroup>

@@ -1,0 +1,124 @@
+---
+title: Rate Limiter Strategy
+description: API reference for Polly's rate limiter resilience strategy
+---
+
+The rate limiter strategy controls the rate of executions to prevent resource exhaustion and ensure fair usage.
+
+## RateLimiterStrategyOptions
+
+Configures the rate limiter resilience strategy.
+
+```csharp
+public class RateLimiterStrategyOptions : ResilienceStrategyOptions
+```
+
+### Properties
+
+<ParamField path="RateLimiter" type="Func<RateLimiterArguments, ValueTask<RateLimitLease>>?" default="null">
+  A rate limiter delegate that produces `RateLimitLease` instances.
+  
+  If `null`, the strategy uses a `ConcurrencyLimiter` created with `DefaultRateLimiterOptions`.
+</ParamField>
+
+<ParamField path="DefaultRateLimiterOptions" type="ConcurrencyLimiterOptions" required>
+  The default rate limiter options used when `RateLimiter` is `null`.
+  
+  Default configuration:
+  - `PermitLimit`: 1000
+  - `QueueLimit`: 0
+</ParamField>
+
+<ParamField path="OnRejected" type="Func<OnRateLimiterRejectedArguments, ValueTask>?" default="null">
+  An event raised when the execution of a user-provided callback is rejected by the rate limiter.
+</ParamField>
+
+## Extension Methods
+
+Add rate limiter strategies to a resilience pipeline:
+
+```csharp
+public static ResiliencePipelineBuilder AddRateLimiter(
+    this ResiliencePipelineBuilder builder,
+    RateLimiterStrategyOptions options)
+```
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddRateLimiter<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    RateLimiterStrategyOptions options)
+```
+
+## Usage Examples
+
+### Using Default Concurrency Limiter
+
+```csharp
+using System.Threading.RateLimiting;
+
+var rateLimiterOptions = new RateLimiterStrategyOptions
+{
+    DefaultRateLimiterOptions = new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 100,
+        QueueLimit = 50
+    },
+    OnRejected = args =>
+    {
+        Console.WriteLine("Rate limit exceeded!");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(rateLimiterOptions)
+    .Build();
+```
+
+### Using Custom Rate Limiter
+
+```csharp
+using System.Threading.RateLimiting;
+
+var tokenBucket = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+{
+    TokenLimit = 100,
+    TokensPerPeriod = 10,
+    ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+    QueueLimit = 0
+});
+
+var rateLimiterOptions = new RateLimiterStrategyOptions
+{
+    RateLimiter = args => tokenBucket.AcquireAsync(permitCount: 1, args.Context.CancellationToken)
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(rateLimiterOptions)
+    .Build();
+```
+
+### Sliding Window Rate Limiter
+
+```csharp
+var slidingWindow = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+{
+    PermitLimit = 100,
+    Window = TimeSpan.FromMinutes(1),
+    SegmentsPerWindow = 6
+});
+
+var rateLimiterOptions = new RateLimiterStrategyOptions
+{
+    RateLimiter = args => slidingWindow.AcquireAsync(permitCount: 1, args.Context.CancellationToken)
+};
+```
+
+## Built-in Rate Limiters
+
+.NET provides several built-in rate limiters in the `System.Threading.RateLimiting` namespace:
+
+- **ConcurrencyLimiter**: Limits the number of concurrent executions
+- **TokenBucketRateLimiter**: Token bucket algorithm
+- **SlidingWindowRateLimiter**: Sliding window algorithm
+- **FixedWindowRateLimiter**: Fixed window algorithm

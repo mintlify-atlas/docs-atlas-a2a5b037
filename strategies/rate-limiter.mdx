@@ -1,0 +1,515 @@
+---
+title: Rate Limiter Strategy
+description: Control the rate of operations to prevent system overload and implement throttling
+---
+
+# Rate Limiter Strategy
+
+The rate limiter **proactive** resilience strategy controls the number of operations that can pass through it. This strategy is built on top of the [`System.Threading.RateLimiting`](https://www.nuget.org/packages/System.Threading.RateLimiting) API.
+
+<Note>
+  The rate limiter strategy resides in the [Polly.RateLimiting](https://www.nuget.org/packages/Polly.RateLimiting) package, not in Polly.Core like other strategies.
+</Note>
+
+## When to Use Rate Limiter
+
+Use the rate limiter strategy when:
+
+- Protecting your API from being overwhelmed by too many requests
+- Implementing fair usage policies across multiple clients
+- Controlling outbound calls to rate-limited external APIs
+- Preventing resource exhaustion from excessive concurrent operations
+- Implementing token bucket, sliding window, or fixed window rate limiting
+
+## Installation
+
+```bash
+dotnet add package Polly.RateLimiting
+```
+
+## Rate Limiter Types
+
+Polly supports several rate limiter types:
+
+- **Concurrency Limiter**: Limits the number of concurrent operations
+- **Fixed Window**: Allows a fixed number of operations per time window
+- **Sliding Window**: Smooths rate limiting across overlapping time segments
+- **Token Bucket**: Uses tokens that regenerate over time
+- **Partitioned**: Different rate limits per key (e.g., per user)
+
+## Usage
+
+### Basic Concurrency Limiter
+
+```csharp
+// Allow maximum 100 concurrent operations, with a queue of 50
+var pipeline = new ResiliencePipelineBuilder()
+    .AddConcurrencyLimiter(100, 50)
+    .Build();
+
+try
+{
+    await pipeline.ExecuteAsync(async ct => 
+    {
+        await ProcessRequestAsync(ct);
+    }, cancellationToken);
+}
+catch (RateLimiterRejectedException ex)
+{
+    // Rate limit exceeded
+    if (ex.RetryAfter is TimeSpan retryAfter)
+    {
+        Console.WriteLine($"Retry after: {retryAfter}");
+    }
+}
+```
+
+### Sliding Window Rate Limiter
+
+```csharp
+// Allow 100 operations per minute
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new SlidingWindowRateLimiter(
+        new SlidingWindowRateLimiterOptions
+        {
+            PermitLimit = 100,
+            Window = TimeSpan.FromMinutes(1),
+            SegmentsPerWindow = 4
+        }))
+    .Build();
+```
+
+### Fixed Window Rate Limiter
+
+```csharp
+var limiter = new FixedWindowRateLimiter(
+    new FixedWindowRateLimiterOptions
+    {
+        PermitLimit = 100,
+        Window = TimeSpan.FromMinutes(1),
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+        QueueLimit = 50
+    });
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(limiter)
+    .Build();
+```
+
+### Token Bucket Rate Limiter
+
+```csharp
+var limiter = new TokenBucketRateLimiter(
+    new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = 100,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+        QueueLimit = 50,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(10),
+        TokensPerPeriod = 20,
+        AutoReplenishment = true
+    });
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(limiter)
+    .Build();
+```
+
+### With OnRejected Event
+
+```csharp
+var options = new RateLimiterStrategyOptions
+{
+    DefaultRateLimiterOptions = new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 10,
+        QueueLimit = 5
+    },
+    OnRejected = args =>
+    {
+        Console.WriteLine($"Rate limit exceeded for operation: {args.Context.OperationKey}");
+        // Log to monitoring, send metrics, etc.
+        return default;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(options)
+    .Build();
+```
+
+## Configuration Options
+
+<ParamField path="RateLimiter" type="Func<OnRateLimiterArguments, ValueTask<RateLimitLease>>" default="null">
+  Dynamically creates a `RateLimitLease` for executions. Allows for custom rate limiting logic.
+</ParamField>
+
+<ParamField path="DefaultRateLimiterOptions" type="ConcurrencyLimiterOptions" default="PermitLimit: 1000, QueueLimit: 0">
+  If `RateLimiter` is not provided, uses these options for the default concurrency limiter.
+</ParamField>
+
+<ParamField path="OnRejected" type="Func<OnRateLimiterRejectedArguments, ValueTask>" default="null">
+  Invoked after the limiter rejected an execution, before throwing `RateLimiterRejectedException`.
+</ParamField>
+
+## Advanced Scenarios
+
+### Partitioned Rate Limiter (Per-User)
+
+```csharp
+var userIdKey = new ResiliencePropertyKey<string>("UserId");
+
+var partitionedLimiter = PartitionedRateLimiter.Create<ResilienceContext, string>(context =>
+{
+    // Extract user ID from context
+    string userId = context.Properties.GetValue(userIdKey, "anonymous");
+    
+    return RateLimitPartition.GetConcurrencyLimiter(
+        userId,
+        key => new ConcurrencyLimiterOptions
+        {
+            PermitLimit = 10  // 10 concurrent requests per user
+        });
+});
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        RateLimiter = args => partitionedLimiter.AcquireAsync(
+            args.Context, 1, args.Context.CancellationToken)
+    })
+    .Build();
+
+// Use with user context
+var context = ResilienceContextPool.Shared.Get();
+context.Properties.Set(userIdKey, "user123");
+
+try
+{
+    await pipeline.ExecuteAsync(
+        static async ct => await ProcessRequestAsync(ct),
+        context,
+        cancellationToken);
+}
+finally
+{
+    ResilienceContextPool.Shared.Return(context);
+}
+```
+
+### Chained Rate Limiters
+
+Combine multiple rate limiters for complex scenarios:
+
+```csharp
+var partitionKey = "user-id";
+
+// 100 requests per minute
+var perMinuteLimiter = PartitionedRateLimiter.Create<ResilienceContext, string>(context =>
+{
+    return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, key => new()
+    {
+        PermitLimit = 100,
+        Window = TimeSpan.FromMinutes(1),
+        SegmentsPerWindow = 4
+    });
+});
+
+// 10 requests per second
+var perSecondLimiter = PartitionedRateLimiter.Create<ResilienceContext, string>(context =>
+{
+    return RateLimitPartition.GetSlidingWindowLimiter(partitionKey, key => new()
+    {
+        PermitLimit = 10,
+        Window = TimeSpan.FromSeconds(1),
+        SegmentsPerWindow = 2
+    });
+});
+
+// Chain the limiters
+var chainedLimiter = PartitionedRateLimiter.CreateChained(perMinuteLimiter, perSecondLimiter);
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        RateLimiter = args => chainedLimiter.AcquireAsync(args.Context)
+    })
+    .Build();
+```
+
+### Custom Rate Limiter Logic
+
+```csharp
+var options = new RateLimiterStrategyOptions
+{
+    RateLimiter = async args =>
+    {
+        // Custom logic to determine if request should be allowed
+        var isHighPriority = args.Context.Properties
+            .TryGetValue(new ResiliencePropertyKey<bool>("IsHighPriority"), out var priority) 
+            && priority;
+        
+        if (isHighPriority)
+        {
+            // High priority requests always allowed
+            return new GrantedLease();
+        }
+        
+        // Normal requests go through standard rate limiter
+        var limiter = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+        {
+            PermitLimit = 10
+        });
+        
+        return await limiter.AcquireAsync(1, args.Context.CancellationToken);
+    }
+};
+```
+
+## Proper Disposal
+
+When using dynamic reloads or manual rate limiter creation, ensure proper disposal:
+
+```csharp
+services
+    .AddResiliencePipeline("my-pipeline", (builder, context) =>
+    {
+        var options = context.GetOptions<ConcurrencyLimiterOptions>("my-options");
+        
+        // Enable dynamic reloading
+        context.EnableReloads<ConcurrencyLimiterOptions>("my-options");
+        
+        var limiter = new ConcurrencyLimiter(options);
+        builder.AddRateLimiter(limiter);
+        
+        // Dispose when pipeline is disposed
+        context.OnPipelineDisposed(() => limiter.Dispose());
+    });
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Choose the right limiter type">
+    - **Concurrency Limiter**: Limit simultaneous operations (database connections, API calls)
+    - **Fixed Window**: Simple rate limiting with defined time windows
+    - **Sliding Window**: Smoother rate limiting, prevents burst at window edges
+    - **Token Bucket**: Allows bursts while maintaining average rate
+    - **Partitioned**: Different limits per user/tenant/key
+  </Accordion>
+  
+  <Accordion title="Configure queue limits appropriately">
+    Set `QueueLimit` based on acceptable latency:
+    - 0: Reject immediately when limit reached
+    - Small value: Low latency, but more rejections
+    - Large value: Fewer rejections, but higher latency
+  </Accordion>
+  
+  <Accordion title="Use partitioned limiters for multi-tenant scenarios">
+    Prevent one user/tenant from consuming all resources:
+    
+    ```csharp
+    PartitionedRateLimiter.Create<ResilienceContext, string>(context =>
+    {
+        var tenantId = GetTenantId(context);
+        return RateLimitPartition.GetConcurrencyLimiter(
+            tenantId, 
+            _ => new ConcurrencyLimiterOptions { PermitLimit = 10 });
+    });
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle RetryAfter in responses">
+    When catching `RateLimiterRejectedException`, check for `RetryAfter` and respect it:
+    
+    ```csharp
+    catch (RateLimiterRejectedException ex)
+    {
+        if (ex.RetryAfter.HasValue)
+        {
+            await Task.Delay(ex.RetryAfter.Value);
+            // Retry operation
+        }
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Monitor rate limiter metrics">
+    Use `OnRejected` to track rejections and adjust limits:
+    
+    ```csharp
+    OnRejected = args =>
+    {
+        metrics.IncrementCounter("rate_limit_rejections");
+        return default;
+    }
+    ```
+  </Accordion>
+  
+  <Accordion title="Don't use rate limiter for retry delay">
+    Rate limiter is for controlling load, not for implementing retry delays. Use the Retry strategy for that.
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+### API Rate Limiting Middleware
+
+```csharp
+public class RateLimitingMiddleware
+{
+    private readonly RequestDelegate _next;
+    private readonly ResiliencePipeline _pipeline;
+
+    public RateLimitingMiddleware(
+        RequestDelegate next, 
+        ResiliencePipeline pipeline)
+    {
+        _next = next;
+        _pipeline = pipeline;
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        try
+        {
+            await _pipeline.ExecuteAsync(async ct => 
+            {
+                await _next(context);
+            }, context.RequestAborted);
+        }
+        catch (RateLimiterRejectedException ex)
+        {
+            context.Response.StatusCode = 429; // Too Many Requests
+            
+            if (ex.RetryAfter.HasValue)
+            {
+                context.Response.Headers["Retry-After"] = 
+                    ex.RetryAfter.Value.TotalSeconds.ToString();
+            }
+            
+            await context.Response.WriteAsync("Rate limit exceeded");
+        }
+    }
+}
+```
+
+### External API Client with Rate Limiting
+
+```csharp
+public class ExternalApiClient
+{
+    private readonly HttpClient _httpClient;
+    private readonly ResiliencePipeline<HttpResponseMessage> _pipeline;
+
+    public ExternalApiClient(HttpClient httpClient)
+    {
+        _httpClient = httpClient;
+        
+        // Respect external API's rate limit: 100 requests per minute
+        _pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddRateLimiter(new SlidingWindowRateLimiter(
+                new SlidingWindowRateLimiterOptions
+                {
+                    PermitLimit = 100,
+                    Window = TimeSpan.FromMinutes(1),
+                    SegmentsPerWindow = 6
+                }))
+            .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .HandleResult(r => r.StatusCode == HttpStatusCode.TooManyRequests)
+                    .Handle<RateLimiterRejectedException>(),
+                MaxRetryAttempts = 3,
+                DelayGenerator = args =>
+                {
+                    // Use Retry-After header if available
+                    if (args.Outcome.Result?.Headers.RetryAfter?.Delta is TimeSpan delay)
+                    {
+                        return new ValueTask<TimeSpan?>(delay);
+                    }
+                    return new ValueTask<TimeSpan?>(TimeSpan.FromSeconds(10));
+                }
+            })
+            .Build();
+    }
+
+    public async Task<string> GetDataAsync(string endpoint, CancellationToken ct)
+    {
+        var response = await _pipeline.ExecuteAsync(async token =>
+        {
+            return await _httpClient.GetAsync(endpoint, token);
+        }, ct);
+
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+}
+```
+
+### Database Connection Pool Management
+
+```csharp
+public class DatabaseService
+{
+    private readonly string _connectionString;
+    private readonly ResiliencePipeline _pipeline;
+
+    public DatabaseService(string connectionString)
+    {
+        _connectionString = connectionString;
+        
+        // Limit concurrent database connections
+        _pipeline = new ResiliencePipelineBuilder()
+            .AddConcurrencyLimiter(permitLimit: 20, queueLimit: 100)
+            .AddTimeout(TimeSpan.FromSeconds(30))
+            .Build();
+    }
+
+    public async Task<List<Customer>> GetCustomersAsync(CancellationToken ct)
+    {
+        return await _pipeline.ExecuteAsync(async token =>
+        {
+            await using var connection = new SqlConnection(_connectionString);
+            await connection.OpenAsync(token);
+            
+            await using var command = new SqlCommand(
+                "SELECT * FROM Customers", connection);
+            
+            var customers = new List<Customer>();
+            await using var reader = await command.ExecuteReaderAsync(token);
+            
+            while (await reader.ReadAsync(token))
+            {
+                customers.Add(new Customer
+                {
+                    Id = reader.GetInt32(0),
+                    Name = reader.GetString(1)
+                });
+            }
+            
+            return customers;
+        }, ct);
+    }
+}
+```
+
+<Accordion title="What's the difference between Concurrency Limiter and Rate Limiter?">
+  - **Concurrency Limiter**: Limits simultaneous operations (e.g., max 10 concurrent requests)
+  - **Rate Limiter**: Limits operations over time (e.g., max 100 requests per minute)
+  
+  Use concurrency limiter for resource protection, rate limiter for throughput control.
+</Accordion>
+
+<Accordion title="Can I use multiple rate limiters in one pipeline?">
+  Yes! You can either:
+  1. Chain multiple `AddRateLimiter` calls (they'll be applied in sequence)
+  2. Use `PartitionedRateLimiter.CreateChained` to combine multiple limiters
+</Accordion>
+
+<Accordion title="How do I implement per-user rate limiting?">
+  Use `PartitionedRateLimiter` with the user ID as the partition key. Store the user ID in the `ResilienceContext.Properties` and extract it in the partition selector.
+</Accordion>
+
+<Accordion title="Should I use rate limiting for retry delays?">
+  No. Rate limiter is for controlling load and preventing overuse. Use the Retry strategy's delay configuration for retry timing.
+</Accordion>

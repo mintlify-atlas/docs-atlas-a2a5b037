@@ -1,0 +1,388 @@
+---
+title: Circuit Breaker Strategy
+description: Prevent cascading failures by breaking the circuit when error thresholds are exceeded
+---
+
+# Circuit Breaker Strategy
+
+The circuit breaker **reactive** resilience strategy shortcuts the execution if the underlying resource is detected as unhealthy. When a circuit is broken, subsequent calls are immediately rejected without attempting execution.
+
+<Warning>
+  The Circuit Breaker strategy rethrows all exceptions, including those that are handled. Its role is to monitor faults and break the circuit when a threshold is reached, not to manage retries.
+</Warning>
+
+## When to Use Circuit Breaker
+
+Use the circuit breaker strategy when:
+
+- Protecting downstream services from being overwhelmed during failures
+- Failing fast is better than making users wait for timeouts
+- You want to give a failing system time to recover
+- Preventing cascading failures in microservices architectures
+- Implementing the "stop doing it if it hurts" principle
+
+## Installation
+
+```bash
+dotnet add package Polly.Core
+```
+
+## Circuit States
+
+The circuit breaker has four states:
+
+<Steps>
+  <Step title="Closed (Normal)">
+    Operations execute normally. The circuit monitors for failures.
+  </Step>
+  
+  <Step title="Open (Broken)">
+    Circuit is broken. All operations are immediately rejected with `BrokenCircuitException`.
+  </Step>
+  
+  <Step title="Half-Open (Testing)">
+    After the break duration expires, the circuit allows one test operation to check if the system has recovered.
+  </Step>
+  
+  <Step title="Isolated (Manual)">
+    Circuit is manually held open. Operations are blocked until manually closed.
+  </Step>
+</Steps>
+
+## Usage
+
+### Basic Circuit Breaker
+
+```csharp
+// Default: breaks when 10% of calls fail within 30 seconds (minimum 100 calls)
+var pipeline = new ResiliencePipelineBuilder()
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+    .Build();
+
+try
+{
+    await pipeline.ExecuteAsync(async ct => 
+    {
+        await CallExternalServiceAsync(ct);
+    }, cancellationToken);
+}
+catch (BrokenCircuitException ex)
+{
+    // Circuit is open, operation was not executed
+    Console.WriteLine($"Circuit broken. Retry after: {ex.RetryAfter}");
+}
+```
+
+### Custom Thresholds
+
+```csharp
+var options = new CircuitBreakerStrategyOptions
+{
+    // Break if 50% of actions fail
+    FailureRatio = 0.5,
+    
+    // Within any 10-second window
+    SamplingDuration = TimeSpan.FromSeconds(10),
+    
+    // With at least 8 actions processed
+    MinimumThroughput = 8,
+    
+    // Stay broken for 30 seconds
+    BreakDuration = TimeSpan.FromSeconds(30),
+    
+    ShouldHandle = new PredicateBuilder()
+        .Handle<HttpRequestException>()
+};
+```
+
+### Dynamic Break Duration
+
+```csharp
+var options = new CircuitBreakerStrategyOptions
+{
+    FailureRatio = 0.5,
+    SamplingDuration = TimeSpan.FromSeconds(10),
+    MinimumThroughput = 8,
+    
+    // Break duration increases with failure count
+    BreakDurationGenerator = static args => 
+        new ValueTask<TimeSpan>(TimeSpan.FromMinutes(args.FailureCount))
+};
+```
+
+### Handling HTTP Status Codes
+
+```csharp
+var options = new CircuitBreakerStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+        .Handle<HttpRequestException>()
+        .HandleResult(r => r.StatusCode == HttpStatusCode.InternalServerError ||
+                          r.StatusCode == HttpStatusCode.ServiceUnavailable)
+};
+```
+
+### Monitoring Circuit State
+
+```csharp
+var stateProvider = new CircuitBreakerStateProvider();
+
+var options = new CircuitBreakerStrategyOptions<HttpResponseMessage>
+{
+    StateProvider = stateProvider
+};
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddCircuitBreaker(options)
+    .Build();
+
+// Check current state
+var state = stateProvider.CircuitState;
+switch (state)
+{
+    case CircuitState.Closed:
+        // Normal operation
+        break;
+    case CircuitState.Open:
+        // Circuit is broken
+        break;
+    case CircuitState.HalfOpen:
+        // Testing if system recovered
+        break;
+    case CircuitState.Isolated:
+        // Manually held open
+        break;
+}
+```
+
+### Manual Circuit Control
+
+```csharp
+var manualControl = new CircuitBreakerManualControl();
+
+var options = new CircuitBreakerStrategyOptions
+{
+    ManualControl = manualControl
+};
+
+// Manually isolate the circuit (e.g., during maintenance)
+await manualControl.IsolateAsync();
+
+// Manually close the circuit to resume operations
+await manualControl.CloseAsync();
+```
+
+### State Transition Events
+
+```csharp
+var options = new CircuitBreakerStrategyOptions
+{
+    OnOpened = args =>
+    {
+        Console.WriteLine($"Circuit opened at {DateTime.Now}");
+        // Send alert, log to monitoring system
+        return default;
+    },
+    OnClosed = args =>
+    {
+        Console.WriteLine("Circuit closed - system recovered");
+        return default;
+    },
+    OnHalfOpened = args =>
+    {
+        Console.WriteLine("Circuit half-open - testing system");
+        return default;
+    }
+};
+```
+
+## Configuration Options
+
+<ParamField path="ShouldHandle" type="Predicate" default="Any exceptions except OperationCanceledException">
+  Defines which results and/or exceptions are counted as failures.
+</ParamField>
+
+<ParamField path="FailureRatio" type="double" default="0.1">
+  The failure-success ratio that will cause the circuit to break. `0.1` means 10% of sampled executions must fail.
+</ParamField>
+
+<ParamField path="MinimumThroughput" type="int" default="100">
+  The minimum number of executions that must occur within the sampling duration before the circuit can break.
+</ParamField>
+
+<ParamField path="SamplingDuration" type="TimeSpan" default="30 seconds">
+  The time period over which the failure-success ratio is calculated.
+</ParamField>
+
+<ParamField path="BreakDuration" type="TimeSpan" default="5 seconds">
+  Fixed time period for which the circuit will remain broken before attempting to reset.
+</ParamField>
+
+<ParamField path="BreakDurationGenerator" type="Func<BreakDurationGeneratorArguments, ValueTask<TimeSpan>>" default="null">
+  Dynamically calculates the break duration using runtime information like failure count. If set, `BreakDuration` is ignored.
+</ParamField>
+
+<ParamField path="ManualControl" type="CircuitBreakerManualControl" default="null">
+  Enables manual control of circuit state via `IsolateAsync()` and `CloseAsync()` methods.
+</ParamField>
+
+<ParamField path="StateProvider" type="CircuitBreakerStateProvider" default="null">
+  Enables retrieving the current circuit state for health reporting and monitoring.
+</ParamField>
+
+<ParamField path="OnClosed" type="Func<OnCircuitClosedArguments, ValueTask>" default="null">
+  Invoked after the circuit transitions to the `Closed` or `Isolated` state.
+</ParamField>
+
+<ParamField path="OnOpened" type="Func<OnCircuitOpenedArguments, ValueTask>" default="null">
+  Invoked after the circuit transitions to the `Open` state.
+</ParamField>
+
+<ParamField path="OnHalfOpened" type="Func<OnCircuitHalfOpenedArguments, ValueTask>" default="null">
+  Invoked after the circuit transitions to the `HalfOpen` state.
+</ParamField>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Combine with Retry">
+    Place circuit breaker inside retry strategy. This allows retry to respect the broken circuit and fail fast when the circuit is open.
+    
+    ```csharp
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddRetry(new RetryStrategyOptions())
+        .AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+        .Build();
+    ```
+  </Accordion>
+  
+  <Accordion title="Set appropriate thresholds">
+    Balance between sensitivity and stability:
+    - Too sensitive: circuit breaks on minor issues
+    - Not sensitive enough: failing system gets overwhelmed
+    
+    Start with defaults and tune based on your service's behavior.
+  </Accordion>
+  
+  <Accordion title="Monitor circuit state">
+    Use `StateProvider` to expose circuit state in health checks and monitoring dashboards. This provides visibility into system health.
+  </Accordion>
+  
+  <Accordion title="Use separate circuits per endpoint">
+    Don't use a single circuit breaker for multiple endpoints. Isolate failures by creating separate circuits for each dependency.
+  </Accordion>
+  
+  <Accordion title="Consider break duration carefully">
+    Too short: may not give the system enough time to recover
+    Too long: increases user-perceived downtime
+    
+    Use `BreakDurationGenerator` for adaptive break durations that increase with repeated failures.
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+### HTTP Client with Circuit Breaker
+
+```csharp
+var httpClient = new HttpClient();
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => (int)r.StatusCode >= 500),
+        FailureRatio = 0.3,
+        SamplingDuration = TimeSpan.FromSeconds(30),
+        MinimumThroughput = 10,
+        BreakDuration = TimeSpan.FromSeconds(15),
+        OnOpened = args =>
+        {
+            Console.WriteLine($"Circuit opened for {args.BreakDuration}");
+            return default;
+        }
+    })
+    .Build();
+
+try
+{
+    var response = await pipeline.ExecuteAsync(async ct =>
+        await httpClient.GetAsync("https://api.example.com/data", ct),
+        cancellationToken);
+}
+catch (BrokenCircuitException)
+{
+    // Return cached data or default value
+}
+```
+
+### Circuit Breaker with Retry and Fallback
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<string>()
+    .AddFallback(new FallbackStrategyOptions<string>
+    {
+        ShouldHandle = new PredicateBuilder<string>()
+            .Handle<BrokenCircuitException>()
+            .Handle<HttpRequestException>(),
+        FallbackAction = args => Outcome.FromResultAsValueTask("Cached value")
+    })
+    .AddRetry(new RetryStrategyOptions<string>
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1)
+    })
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions<string>
+    {
+        FailureRatio = 0.5,
+        MinimumThroughput = 5,
+        SamplingDuration = TimeSpan.FromSeconds(10)
+    })
+    .Build();
+```
+
+### Health Check Integration
+
+```csharp
+public class CircuitBreakerHealthCheck : IHealthCheck
+{
+    private readonly CircuitBreakerStateProvider _stateProvider;
+
+    public CircuitBreakerHealthCheck(CircuitBreakerStateProvider stateProvider)
+    {
+        _stateProvider = stateProvider;
+    }
+
+    public Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        return _stateProvider.CircuitState switch
+        {
+            CircuitState.Closed => Task.FromResult(HealthCheckResult.Healthy("Circuit is closed")),
+            CircuitState.HalfOpen => Task.FromResult(HealthCheckResult.Degraded("Circuit is half-open")),
+            CircuitState.Open => Task.FromResult(HealthCheckResult.Unhealthy("Circuit is open")),
+            CircuitState.Isolated => Task.FromResult(HealthCheckResult.Unhealthy("Circuit is isolated")),
+            _ => Task.FromResult(HealthCheckResult.Unhealthy("Unknown state"))
+        };
+    }
+}
+```
+
+<Accordion title="What's the difference between Closed and Isolated states?">
+  - **Closed**: Normal operation. Circuit monitors for failures and can automatically transition to Open.
+  - **Isolated**: Manually held open. Circuit won't automatically close; requires manual intervention via `CloseAsync()`.
+</Accordion>
+
+<Accordion title="Does the circuit breaker prevent exceptions from being thrown?">
+  No. During normal operation (Closed state), exceptions are thrown as normal. When Open or Isolated, it throws `BrokenCircuitException` or `IsolatedCircuitException` instead.
+</Accordion>
+
+<Accordion title="How do I implement a circuit breaker per user/tenant?">
+  Use the `ResiliencePipelineProvider` with keyed services or maintain a dictionary of circuit breakers per user/tenant identifier.
+</Accordion>
+
+<Accordion title="Can I use one circuit breaker for multiple endpoints?">
+  It's not recommended. Create separate circuit breakers for each dependency to isolate failures and avoid one failing service affecting others.
+</Accordion>

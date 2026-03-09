@@ -1,122 +1,130 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Polly",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#E74856",
+    "light": "#F25C68",
+    "dark": "#C73945"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "/favicon.png",
+  "logo": {
+    "light": "/logo.svg",
+    "dark": "/logo.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/App-vNext/Polly"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/App-vNext/Polly"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
               "index",
-              "quickstart",
-              "development"
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/resilience-pipelines",
+              "concepts/resilience-strategies",
+              "concepts/resilience-context"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Resilience Strategies",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "strategies/overview",
+              "strategies/retry",
+              "strategies/circuit-breaker",
+              "strategies/timeout",
+              "strategies/rate-limiter",
+              "strategies/fallback",
+              "strategies/hedging"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Advanced Topics",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "advanced/dependency-injection",
+              "advanced/telemetry",
+              "advanced/testing",
+              "advanced/performance",
+              "advanced/pipeline-registry"
+            ]
+          },
+          {
+            "group": "Chaos Engineering",
+            "pages": [
+              "chaos/overview",
+              "chaos/fault-injection",
+              "chaos/latency-injection",
+              "chaos/outcome-injection",
+              "chaos/behavior-injection"
+            ]
+          },
+          {
+            "group": "Extensibility",
+            "pages": [
+              "extensibility/overview",
+              "extensibility/custom-reactive-strategy",
+              "extensibility/custom-proactive-strategy"
+            ]
+          },
+          {
+            "group": "Migration & Compatibility",
+            "pages": [
+              "migration/v8-migration-guide",
+              "migration/v7-compatibility"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core",
             "pages": [
-              "api-reference/introduction"
+              "api/polly-core",
+              "api/resilience-pipeline",
+              "api/resilience-pipeline-builder"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Strategies",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/retry-strategy",
+              "api/circuit-breaker-strategy",
+              "api/timeout-strategy",
+              "api/rate-limiter-strategy",
+              "api/fallback-strategy",
+              "api/hedging-strategy"
+            ]
+          },
+          {
+            "group": "Extensions",
+            "pages": [
+              "api/polly-extensions",
+              "api/polly-rate-limiting",
+              "api/polly-testing"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

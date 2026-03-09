@@ -1,0 +1,126 @@
+---
+title: Retry Strategy
+description: API reference for Polly's retry resilience strategy
+---
+
+The retry strategy enables configurable retry behavior with support for exponential backoff, jitter, and custom retry predicates.
+
+## RetryStrategyOptions
+
+Configures the retry resilience strategy.
+
+```csharp
+public class RetryStrategyOptions<TResult> : ResilienceStrategyOptions
+```
+
+### Properties
+
+<ParamField path="MaxRetryAttempts" type="int" default="3">
+  The maximum number of retries to use, in addition to the original call.
+  
+  - Must be between 1 and `int.MaxValue`
+  - Use `int.MaxValue` to retry indefinitely
+</ParamField>
+
+<ParamField path="BackoffType" type="DelayBackoffType" default="Constant">
+  The type of back-off strategy to use between retries.
+  
+  Supported values:
+  - `Constant`: Fixed delay between retries
+  - `Linear`: Delay increases linearly
+  - `Exponential`: Delay increases exponentially
+  
+  This property is ignored when `DelayGenerator` is set.
+</ParamField>
+
+<ParamField path="UseJitter" type="bool" default="false">
+  Indicates whether jitter should be used when calculating the backoff delay.
+  
+  Jitter helps prevent correlated retries and can improve overall resilience.
+</ParamField>
+
+<ParamField path="Delay" type="TimeSpan" default="00:00:02">
+  The base delay between retries.
+  
+  - For `Exponential`: Represents the median delay before the first retry
+  - For `Linear`: Represents the initial delay, increasing linearly
+  - For `Constant`: Represents the fixed delay between retries
+  
+  This property is ignored when `DelayGenerator` returns a valid `TimeSpan`.
+</ParamField>
+
+<ParamField path="MaxDelay" type="TimeSpan?" default="null">
+  The maximum delay between retries.
+  
+  Used to cap the maximum delay, especially useful with exponential backoff. If `null`, the delay is not capped.
+</ParamField>
+
+<ParamField path="ShouldHandle" type="Func<RetryPredicateArguments<TResult>, ValueTask<bool>>" required>
+  A predicate that determines whether the retry should be executed for a given outcome.
+  
+  Default: Retries on any exception except `OperationCanceledException`.
+</ParamField>
+
+<ParamField path="DelayGenerator" type="Func<RetryDelayGeneratorArguments<TResult>, ValueTask<TimeSpan?>>?" default="null">
+  A generator that calculates the delay between retries.
+  
+  If the generator returns `null`, the delay calculated by the retry strategy will be used.
+</ParamField>
+
+<ParamField path="OnRetry" type="Func<OnRetryArguments<TResult>, ValueTask>?" default="null">
+  An event delegate that is raised when a retry happens.
+  
+  **Important**: After this event, the result is discarded and disposed. Create a copy if you need to preserve it.
+</ParamField>
+
+## Extension Methods
+
+Add retry strategies to a resilience pipeline using these extension methods:
+
+```csharp
+public static ResiliencePipelineBuilder AddRetry(
+    this ResiliencePipelineBuilder builder,
+    RetryStrategyOptions options)
+```
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddRetry<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    RetryStrategyOptions<TResult> options)
+```
+
+## OnRetryArguments
+
+Arguments passed to the `OnRetry` callback.
+
+```csharp
+public readonly struct OnRetryArguments<TResult>
+{
+    public ResilienceContext Context { get; }
+    public Outcome<TResult> Outcome { get; }
+    public int AttemptNumber { get; }
+    public TimeSpan RetryDelay { get; }
+    public TimeSpan Duration { get; }
+}
+```
+
+## Usage Example
+
+```csharp
+var retryOptions = new RetryStrategyOptions
+{
+    MaxRetryAttempts = 3,
+    BackoffType = DelayBackoffType.Exponential,
+    UseJitter = true,
+    Delay = TimeSpan.FromSeconds(2),
+    OnRetry = args =>
+    {
+        Console.WriteLine($"Retry attempt {args.AttemptNumber} after {args.RetryDelay}");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(retryOptions)
+    .Build();
+```

@@ -1,0 +1,113 @@
+---
+title: Timeout Strategy
+description: API reference for Polly's timeout resilience strategy
+---
+
+The timeout strategy ensures that operations do not execute for longer than a configured duration.
+
+## TimeoutStrategyOptions
+
+Configures the timeout resilience strategy.
+
+```csharp
+public class TimeoutStrategyOptions : ResilienceStrategyOptions
+```
+
+### Properties
+
+<ParamField path="Timeout" type="TimeSpan" default="00:00:30">
+  The default timeout duration.
+  
+  - Must be greater than 10 milliseconds
+  - Must be less than 24 hours
+  - Default is 30 seconds
+</ParamField>
+
+<ParamField path="TimeoutGenerator" type="Func<TimeoutGeneratorArguments, ValueTask<TimeSpan>>?" default="null">
+  A generator that produces the timeout for a given execution.
+  
+  When `null`, the `Timeout` property value is used instead.
+  
+  **Special values**:
+  - Return `TimeSpan.Zero` or negative value: Strategy does nothing
+  - Return `Timeout.InfiniteTimeSpan`: Disable timeout for the execution
+</ParamField>
+
+<ParamField path="OnTimeout" type="Func<OnTimeoutArguments, ValueTask>?" default="null">
+  A delegate that is invoked when a timeout occurs.
+</ParamField>
+
+## Extension Methods
+
+Add timeout strategies to a resilience pipeline:
+
+```csharp
+public static ResiliencePipelineBuilder AddTimeout(
+    this ResiliencePipelineBuilder builder,
+    TimeoutStrategyOptions options)
+```
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddTimeout<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    TimeoutStrategyOptions options)
+```
+
+## OnTimeoutArguments
+
+Arguments passed to the `OnTimeout` callback.
+
+```csharp
+public readonly struct OnTimeoutArguments
+{
+    public ResilienceContext Context { get; }
+    public TimeSpan Timeout { get; }
+}
+```
+
+## Usage Example
+
+```csharp
+var timeoutOptions = new TimeoutStrategyOptions
+{
+    Timeout = TimeSpan.FromSeconds(10),
+    OnTimeout = args =>
+    {
+        Console.WriteLine($"Operation timed out after {args.Timeout}");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(timeoutOptions)
+    .Build();
+
+await pipeline.ExecuteAsync(async ct =>
+{
+    await LongRunningOperationAsync(ct);
+});
+```
+
+## Dynamic Timeouts
+
+Use `TimeoutGenerator` for per-execution timeout values:
+
+```csharp
+var timeoutOptions = new TimeoutStrategyOptions
+{
+    TimeoutGenerator = args =>
+    {
+        // Use different timeouts based on operation type
+        var operationType = args.Context.Properties.GetValue(
+            new ResiliencePropertyKey<string>("OperationType"), 
+            "default");
+        
+        return new ValueTask<TimeSpan>(operationType switch
+        {
+            "critical" => TimeSpan.FromSeconds(5),
+            "normal" => TimeSpan.FromSeconds(10),
+            _ => TimeSpan.FromSeconds(30)
+        });
+    }
+};
+```

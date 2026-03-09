@@ -1,0 +1,417 @@
+---
+title: Resilience Strategies
+description: Explore the built-in resilience strategies in Polly for handling failures and protecting your applications
+---
+
+Resilience strategies are the building blocks of Polly. They execute user-defined callbacks while adding layers of fault tolerance. Strategies cannot run independently—they must be executed through a **resilience pipeline**.
+
+## Strategy Categories
+
+Polly organizes resilience strategies into two main categories:
+
+<CardGroup cols={2}>
+
+<Card title="Reactive Strategies" icon="shield-check">
+  Handle specific exceptions or results returned by callbacks. These strategies respond to failures after they occur.
+</Card>
+
+<Card title="Proactive Strategies" icon="clock">
+  Make proactive decisions to cancel or reject callback execution before failures occur, like rate limiting or timeouts.
+</Card>
+
+</CardGroup>
+
+## Built-in Reactive Strategies
+
+Reactive strategies respond to failures by handling specific exceptions or results:
+
+<Accordion title="Retry - Handle transient failures">
+**Premise:** Many faults are transient and may self-correct after a short delay.
+
+**How it helps:** Automatically retries failed operations with configurable delay strategies (constant, linear, exponential with jitter).
+
+**Use when:** Network calls fail temporarily, database connections drop, or services experience brief outages.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(2),
+        BackoffType = DelayBackoffType.Exponential,
+        UseJitter = true
+    })
+    .Build();
+```
+
+[Learn more about Retry →](/strategies/retry)
+</Accordion>
+
+<Accordion title="Circuit Breaker - Protect failing systems">
+**Premise:** When a system is seriously struggling, failing fast is better than making users wait. Protecting a faulting system from overload helps it recover.
+
+**How it helps:** Blocks executions when failures exceed a threshold, then periodically allows test requests to check if the system has recovered.
+
+**Use when:** You need to prevent cascading failures and give downstream services time to recover.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+    {
+        FailureRatio = 0.5,
+        SamplingDuration = TimeSpan.FromSeconds(10),
+        MinimumThroughput = 8,
+        BreakDuration = TimeSpan.FromSeconds(30)
+    })
+    .Build();
+```
+
+[Learn more about Circuit Breaker →](/strategies/circuit-breaker)
+</Accordion>
+
+<Accordion title="Fallback - Degrade gracefully">
+**Premise:** Things will still fail—plan what you will do when that happens.
+
+**How it helps:** Defines an alternative value to return or action to execute when operations fail.
+
+**Use when:** You can provide default data, cached responses, or alternative implementations.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddFallback(new FallbackStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>(),
+        FallbackAction = args => 
+            Outcome.FromResultAsValueTask(GetCachedResponse())
+    })
+    .Build();
+```
+
+[Learn more about Fallback →](/strategies/fallback)
+</Accordion>
+
+<Accordion title="Hedging - Handle slow operations">
+**Premise:** Things can be slow sometimes—plan what you will do when that happens.
+
+**How it helps:** Executes parallel actions when things are slow and returns the fastest successful result.
+
+**Use when:** You have multiple endpoints that can serve the same data, and latency is critical.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddHedging(new HedgingStrategyOptions<HttpResponseMessage>
+    {
+        MaxHedgedAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1)
+    })
+    .Build();
+```
+
+[Learn more about Hedging →](/strategies/hedging)
+</Accordion>
+
+## Built-in Proactive Strategies
+
+Proactive strategies prevent failures by controlling execution:
+
+<Accordion title="Timeout - Don't wait forever">
+**Premise:** Beyond a certain wait time, a successful result is unlikely.
+
+**How it helps:** Guarantees the caller won't wait beyond the timeout period.
+
+**Use when:** You need to enforce time limits on operations to maintain system responsiveness.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(new TimeoutStrategyOptions
+    {
+        Timeout = TimeSpan.FromSeconds(5)
+    })
+    .Build();
+```
+
+[Learn more about Timeout →](/strategies/timeout)
+</Accordion>
+
+<Accordion title="Rate Limiter - Control request rates">
+**Premise:** Limiting the rate a system handles requests is another way to control load on your system or downstream services.
+
+**How it helps:** Constrains executions to not exceed a certain rate.
+
+**Use when:** You need to throttle incoming requests or limit the rate of calls to downstream APIs.
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        PermitLimit = 100,
+        QueueLimit = 50
+    })
+    .Build();
+```
+
+[Learn more about Rate Limiter →](/strategies/rate-limiter)
+</Accordion>
+
+## Strategy Availability
+
+Not all strategies are available for both generic and non-generic pipelines:
+
+| Strategy | `ResiliencePipelineBuilder` | `ResiliencePipelineBuilder<T>` |
+|----------|:---------------------------:|:------------------------------:|
+| Circuit Breaker | ✅ | ✅ |
+| Fallback | ❌ | ✅ |
+| Hedging | ❌ | ✅ |
+| Rate Limiter | ✅ | ✅ |
+| Retry | ✅ | ✅ |
+| Timeout | ✅ | ✅ |
+
+<Note>
+Fallback and Hedging strategies require a result type (`T`) because they need to return or handle specific result values.
+</Note>
+
+## Adding Strategies to Pipelines
+
+Each resilience strategy provides extension methods for adding it to pipeline builders:
+
+```csharp
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(new TimeoutStrategyOptions
+    {
+        Timeout = TimeSpan.FromSeconds(5)
+    })
+    .Build();
+```
+
+<Tip>
+Configuration options are automatically validated and come with sensible defaults. You only need to specify properties that differ from the defaults.
+</Tip>
+
+## Fault Handling with Predicates
+
+Reactive strategies use the `ShouldHandle` predicate to determine which failures to handle. You can configure this in two ways:
+
+### Using Switch Expressions (Recommended)
+
+Switch expressions provide maximum flexibility:
+
+```csharp
+var options = new RetryStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = args => args.Outcome switch
+    {
+        { Exception: HttpRequestException } => PredicateResult.True(),
+        { Exception: TimeoutRejectedException } => PredicateResult.True(),
+        { Result: HttpResponseMessage response } when !response.IsSuccessStatusCode 
+            => PredicateResult.True(),
+        _ => PredicateResult.False()
+    }
+};
+```
+
+### Using PredicateBuilder
+
+The `PredicateBuilder` provides a fluent API for simpler scenarios:
+
+```csharp
+var options = new RetryStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+        .HandleResult(response => !response.IsSuccessStatusCode)
+        .Handle<HttpRequestException>()
+        .Handle<TimeoutRejectedException>()
+};
+```
+
+<Warning>
+Using `PredicateBuilder` has a minor performance impact compared to manual predicates, as each method call registers a separate predicate that must be invoked.
+</Warning>
+
+## Asynchronous Predicates
+
+You can use async predicates for advanced scenarios like checking response bodies:
+
+```csharp
+var options = new RetryStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = async args =>
+    {
+        if (args.Outcome.Exception is not null)
+        {
+            return args.Outcome.Exception switch
+            {
+                HttpRequestException => true,
+                TimeoutRejectedException => true,
+                _ => false
+            };
+        }
+
+        // Check response body asynchronously
+        return await ShouldRetryAsync(
+            args.Outcome.Result!, 
+            args.Context.CancellationToken);
+    }
+};
+```
+
+## Combining Strategies
+
+You can combine multiple strategies in a single pipeline. The order matters:
+
+<CodeGroup>
+
+```csharp Defensive Layers
+// Circuit breaker on outside to fail fast
+// Retry in middle to handle transient failures  
+// Timeout on inside for per-attempt limits
+var pipeline = new ResiliencePipelineBuilder()
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+    {
+        FailureRatio = 0.5,
+        SamplingDuration = TimeSpan.FromSeconds(10),
+        MinimumThroughput = 5,
+        BreakDuration = TimeSpan.FromSeconds(30)
+    })
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1),
+        BackoffType = DelayBackoffType.Exponential
+    })
+    .AddTimeout(TimeSpan.FromSeconds(5))
+    .Build();
+```
+
+```csharp Rate Limiting First
+// Rate limiter first to control load
+// Then circuit breaker for fault protection
+// Then retry for transient failures
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        PermitLimit = 100
+    })
+    .AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+    .AddRetry(new RetryStrategyOptions())
+    .Build();
+```
+
+```csharp Fallback Safety Net
+// Fallback as outer safety net
+// Retry to recover from transient failures
+// Timeout to prevent hanging
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddFallback(new FallbackStrategyOptions<HttpResponseMessage>
+    {
+        FallbackAction = args => 
+            Outcome.FromResultAsValueTask(GetDefaultResponse())
+    })
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>())
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
+```
+
+</CodeGroup>
+
+## Strategy Configuration Best Practices
+
+<Steps>
+
+<Step title="Use collections for exception types">
+Instead of chaining multiple `.Handle<T>()` calls, group exceptions:
+
+```csharp
+ImmutableArray<Type> retryableExceptions = 
+[
+    typeof(SocketException),
+    typeof(HttpRequestException),
+    typeof(TimeoutRejectedException)
+];
+
+var options = new RetryStrategyOptions
+{
+    ShouldHandle = args =>
+        ValueTask.FromResult(args.Outcome.Exception is not null &&
+        retryableExceptions.Contains(args.Outcome.Exception.GetType()))
+};
+```
+</Step>
+
+<Step title="Define separate strategies for different failure domains">
+Don't mix network failures with parsing failures in one strategy:
+
+```csharp
+// Separate: Network calls
+var networkPipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new() { 
+        ShouldHandle = new PredicateBuilder()
+            .Handle<HttpRequestException>() 
+    })
+    .Build();
+
+// Separate: Processing
+var processingPipeline = new ResiliencePipelineBuilder<Foo>()
+    .AddTimeout(TimeSpan.FromMinutes(1))
+    .Build();
+```
+</Step>
+
+<Step title="Configure sensible defaults">
+All strategy options come with sensible defaults. Override only what you need:
+
+```csharp
+// This works and uses sensible defaults
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new())
+    .Build();
+
+// Customize only what you need
+var pipeline2 = new ResiliencePipelineBuilder()
+    .AddRetry(new() 
+    { 
+        MaxRetryAttempts = 5,  // Override default of 3
+        UseJitter = true       // Override default of false
+        // Other properties use defaults
+    })
+    .Build();
+```
+</Step>
+
+</Steps>
+
+## Quick Reference
+
+Here's a quick guide to choosing the right strategy:
+
+| Scenario | Recommended Strategy |
+|----------|---------------------|
+| Network call might fail temporarily | Retry |
+| Operation might take too long | Timeout |
+| Service is completely down | Circuit Breaker |
+| Need to return default data on failure | Fallback |
+| Want fastest response from multiple sources | Hedging |
+| Need to control request rate | Rate Limiter |
+| Multiple concurrent requests | Concurrency Limiter |
+
+## Next Steps
+
+<CardGroup cols={2}>
+
+<Card title="Resilience Pipelines" icon="sitemap" href="/concepts/resilience-pipelines">
+  Learn how to compose strategies into pipelines
+</Card>
+
+<Card title="Resilience Context" icon="database" href="/concepts/resilience-context">
+  Understand how to share data across strategy execution
+</Card>
+
+<Card title="Retry Strategy" icon="rotate-right" href="/strategies/retry">
+  Deep dive into the retry strategy
+</Card>
+
+<Card title="Circuit Breaker Strategy" icon="shield" href="/strategies/circuit-breaker">
+  Explore circuit breaker patterns
+</Card>
+
+</CardGroup>

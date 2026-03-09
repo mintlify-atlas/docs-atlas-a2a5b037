@@ -1,0 +1,122 @@
+---
+title: "Polly.Core"
+description: "Core classes and interfaces for the Polly resilience library"
+---
+
+## Overview
+
+The Polly.Core namespace provides the foundational types for building and executing resilience pipelines in .NET applications.
+
+## Key Classes
+
+### ResilienceContext
+
+A context assigned to a single execution of a `ResiliencePipeline`. It is created manually or automatically when executing resilience operations.
+
+<ParamField path="OperationKey" type="string?">
+  A key unique to the call site of the current execution. This value should have low cardinality (do not use GUIDs).
+</ParamField>
+
+<ParamField path="CancellationToken" type="CancellationToken">
+  The cancellation token associated with the execution.
+</ParamField>
+
+<ParamField path="ContinueOnCapturedContext" type="bool">
+  Indicates whether the execution should continue on the captured context.
+</ParamField>
+
+<ParamField path="Properties" type="ResilienceProperties">
+  Custom properties attached to the context.
+</ParamField>
+
+<Warning>
+  Do not re-use an instance of `ResilienceContext` across more than one execution. Retrieve contexts from the pool using `ResilienceContextPool.Get(CancellationToken)` and return them with `ResilienceContextPool.Return(ResilienceContext)`.
+</Warning>
+
+### Outcome\<TResult\>
+
+Represents the outcome of an operation, which can be either a result value or an exception. Used in advanced, low-allocation scenarios.
+
+#### Static Factory Methods
+
+<ResponseField name="FromResult<TResult>" type="Outcome<TResult>">
+  Creates an outcome with the given result value.
+  
+  <Expandable title="Parameters">
+    <ParamField path="value" type="TResult?">
+      The result value.
+    </ParamField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="FromException<TResult>" type="Outcome<TResult>">
+  Creates an outcome with the given exception.
+  
+  <Expandable title="Parameters">
+    <ParamField path="exception" type="Exception" required>
+      The exception that occurred.
+    </ParamField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="FromResultAsValueTask<TResult>" type="ValueTask<Outcome<TResult>>">
+  Returns an outcome with the given value wrapped as a completed `ValueTask`.
+  
+  <Expandable title="Parameters">
+    <ParamField path="value" type="TResult">
+      The result value.
+    </ParamField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="FromExceptionAsValueTask<TResult>" type="ValueTask<Outcome<TResult>>">
+  Returns an outcome with the given exception wrapped as a completed `ValueTask`.
+  
+  <Expandable title="Parameters">
+    <ParamField path="exception" type="Exception" required>
+      The exception that occurred.
+    </ParamField>
+  </Expandable>
+</ResponseField>
+
+## Example Usage
+
+```csharp
+using Polly;
+
+// Create a context from the pool
+var context = ResilienceContextPool.Shared.Get(cancellationToken);
+context.OperationKey = "my-operation";
+
+try
+{
+    // Use the context in pipeline execution
+    await pipeline.ExecuteAsync(
+        static (ctx, state) => { /* your logic */ },
+        context,
+        state);
+}
+finally
+{
+    // Always return the context to the pool
+    ResilienceContextPool.Shared.Return(context);
+}
+```
+
+```csharp
+// Using Outcome for advanced scenarios
+public async ValueTask<Outcome<string>> GetDataAsync(
+    ResilienceContext context,
+    CancellationToken ct)
+{
+    try
+    {
+        var result = await FetchDataAsync(ct);
+        return Outcome.FromResult(result);
+    }
+    catch (Exception ex)
+    {
+        return Outcome.FromException<string>(ex);
+    }
+}
+```

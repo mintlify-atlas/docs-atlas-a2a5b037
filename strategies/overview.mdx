@@ -1,0 +1,165 @@
+---
+title: Resilience Strategies Overview
+description: Learn about Polly's resilience strategies for building fault-tolerant .NET applications
+---
+
+# Resilience Strategies
+
+Resilience strategies are essential components of Polly, designed to execute user-defined callbacks while adding an extra layer of resilience. These strategies can't be executed directly; they must be run through a **resilience pipeline**.
+
+<Note>
+  Polly provides an API to construct resilience pipelines by incorporating one or more resilience strategies through the pipeline builders.
+</Note>
+
+## Strategy Categories
+
+Polly categorizes resilience strategies into two main groups:
+
+<CardGroup cols={2}>
+  <Card title="Reactive Strategies" icon="rotate">
+    Handle specific exceptions that are thrown, or results that are returned, by the callbacks executed through the strategy.
+  </Card>
+  
+  <Card title="Proactive Strategies" icon="shield">
+    Make proactive decisions to cancel or reject the execution of callbacks (e.g., using a rate limiter or a timeout resilience strategy).
+  </Card>
+</CardGroup>
+
+## Built-in Reactive Strategies
+
+<CardGroup cols={2}>
+  <Card title="Retry" icon="arrows-rotate" href="/strategies/retry">
+    Many faults are transient and may self-correct after a short delay. Allows configuring automatic retries.
+  </Card>
+  
+  <Card title="Circuit Breaker" icon="circle-exclamation" href="/strategies/circuit-breaker">
+    When a system is seriously struggling, failing fast is better than making users wait. Breaks the circuit for a period when faults exceed a threshold.
+  </Card>
+  
+  <Card title="Fallback" icon="parachute-box" href="/strategies/fallback">
+    Things will still fail - plan what you will do when that happens. Defines an alternative value to be returned on failure.
+  </Card>
+  
+  <Card title="Hedging" icon="layer-group" href="/strategies/hedging">
+    Things can be slow sometimes. Executes parallel actions when things are slow and waits for the fastest one.
+  </Card>
+</CardGroup>
+
+## Built-in Proactive Strategies
+
+<CardGroup cols={2}>
+  <Card title="Timeout" icon="clock" href="/strategies/timeout">
+    Beyond a certain wait, a success result is unlikely. Guarantees the caller won't have to wait beyond the timeout.
+  </Card>
+  
+  <Card title="Rate Limiter" icon="gauge-high" href="/strategies/rate-limiter">
+    Limiting the rate a system handles requests is another way to control load. Constrains executions to not exceed a certain rate.
+  </Card>
+</CardGroup>
+
+## Usage
+
+Extensions for adding resilience strategies to the builders are provided by each strategy. Depending on the type of strategy, these extensions may be available for both `ResiliencePipelineBuilder` and `ResiliencePipelineBuilder<T>`.
+
+| Strategy | `ResiliencePipelineBuilder` | `ResiliencePipelineBuilder<T>` |
+| -------- | :-------------------------: | :----------------------------: |
+| Circuit Breaker | ✅ | ✅ |
+| Fallback | ❌ | ✅ |
+| Hedging | ❌ | ✅ |
+| Rate Limiter | ✅ | ✅ |
+| Retry | ✅ | ✅ |
+| Timeout | ✅ | ✅ |
+
+### Basic Example
+
+Here's a simple example of adding a timeout strategy:
+
+```csharp
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(new TimeoutStrategyOptions
+    {
+        Timeout = TimeSpan.FromSeconds(5)
+    })
+    .Build();
+```
+
+<Note>
+  The configuration options are automatically validated by Polly and come with sensible defaults. You don't have to specify all properties unless needed.
+</Note>
+
+## Fault Handling
+
+Each reactive strategy provides access to the `ShouldHandle` predicate property. This property offers a mechanism to decide whether the resilience strategy should manage the fault or result returned after execution.
+
+### Using Switch Expressions
+
+```csharp
+var options = new RetryStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = args => args.Outcome switch
+    {
+        { Exception: HttpRequestException } => PredicateResult.True(),
+        { Exception: TimeoutRejectedException } => PredicateResult.True(),
+        { Result: HttpResponseMessage response } when !response.IsSuccessStatusCode => PredicateResult.True(),
+        _ => PredicateResult.False()
+    }
+};
+```
+
+### Using PredicateBuilder
+
+```csharp
+var options = new RetryStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+        .HandleResult(response => !response.IsSuccessStatusCode)
+        .Handle<HttpRequestException>()
+        .Handle<TimeoutRejectedException>()
+};
+```
+
+<Tip>
+  For greater flexibility and performance, use switch expressions. For simplicity, use `PredicateBuilder`.
+</Tip>
+
+## Quick Start
+
+To use Polly, first add the package:
+
+```bash
+dotnet add package Polly.Core
+```
+
+Then create a resilience pipeline:
+
+```csharp
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions())
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
+
+await pipeline.ExecuteAsync(static async token => 
+{
+    // Your custom logic goes here
+}, cancellationToken);
+```
+
+<Accordion title="What's the difference between Reactive and Proactive strategies?">
+  **Reactive strategies** respond to failures after they occur (exceptions or bad results). They handle the problem after detecting it.
+  
+  **Proactive strategies** prevent failures from occurring or becoming worse. They act before problems happen (timeouts, rate limiting).
+</Accordion>
+
+<Accordion title="Can I combine multiple strategies?">
+  Yes! Polly is designed to let you chain multiple strategies together in a resilience pipeline. For example, you can combine retry with timeout, or add a circuit breaker with fallback.
+</Accordion>
+
+<Accordion title="What order should I add strategies?">
+  Generally, follow this order from outer to inner:
+  1. Timeout (outermost)
+  2. Retry
+  3. Circuit Breaker
+  4. Fallback (innermost)
+  
+  This ensures timeouts apply to all retry attempts, and fallback is used as a last resort.
+</Accordion>

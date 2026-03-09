@@ -1,0 +1,140 @@
+---
+title: Circuit Breaker Strategy
+description: API reference for Polly's circuit breaker resilience strategy
+---
+
+The circuit breaker strategy prevents cascading failures by breaking the circuit when a failure threshold is exceeded.
+
+## CircuitBreakerStrategyOptions
+
+Configures the circuit breaker resilience strategy.
+
+```csharp
+public class CircuitBreakerStrategyOptions<TResult> : ResilienceStrategyOptions
+```
+
+### How It Works
+
+The circuit breaks if, within any time-slice of duration `SamplingDuration`, the proportion of actions resulting in a handled exception exceeds `FailureRatio`, provided also that the number of actions through the circuit is at least `MinimumThroughput`.
+
+The circuit stays broken for the `BreakDuration`. Any attempt to execute while broken immediately throws a `BrokenCircuitException`.
+
+### Properties
+
+<ParamField path="FailureRatio" type="double" default="0.1">
+  The failure-to-success ratio at which the circuit will break.
+  
+  - Must be between 0 and 1 (inclusive)
+  - Example: 0.5 means the circuit breaks if 50% or more of actions fail
+  - Default is 0.1 (10%)
+</ParamField>
+
+<ParamField path="MinimumThroughput" type="int" default="100">
+  The minimum throughput required for statistics to be considered significant.
+  
+  This many actions or more must pass through the circuit in the time-slice for the circuit breaker to come into action.
+  
+  - Must be 2 or greater
+  - Default is 100
+</ParamField>
+
+<ParamField path="SamplingDuration" type="TimeSpan" default="00:00:30">
+  The duration of the sampling window over which failure ratios are assessed.
+  
+  - Must be greater than 0.5 seconds
+  - Default is 30 seconds
+</ParamField>
+
+<ParamField path="BreakDuration" type="TimeSpan" default="00:00:05">
+  The duration the circuit will stay open before resetting.
+  
+  - Must be greater than 0.5 seconds
+  - Default is 5 seconds
+</ParamField>
+
+<ParamField path="BreakDurationGenerator" type="Func<BreakDurationGeneratorArguments, ValueTask<TimeSpan>>?" default="null">
+  An optional delegate to dynamically generate the break duration.
+  
+  Allows for advanced scenarios like exponentially increasing break durations.
+</ParamField>
+
+<ParamField path="ShouldHandle" type="Func<CircuitBreakerPredicateArguments<TResult>, ValueTask<bool>>" required>
+  A predicate that determines whether an outcome should be handled by the circuit breaker.
+  
+  Default: Handles any exception except `OperationCanceledException`.
+</ParamField>
+
+<ParamField path="OnClosed" type="Func<OnCircuitClosedArguments<TResult>, ValueTask>?" default="null">
+  Event raised when the circuit resets to a `Closed` state.
+  
+  **Note**: These events are invoked with eventual consistency. Use `CircuitBreakerStateProvider` for up-to-date state.
+</ParamField>
+
+<ParamField path="OnOpened" type="Func<OnCircuitOpenedArguments<TResult>, ValueTask>?" default="null">
+  Event raised when the circuit transitions to an `Open` state.
+  
+  **Note**: These events are invoked with eventual consistency.
+</ParamField>
+
+<ParamField path="OnHalfOpened" type="Func<OnCircuitHalfOpenedArguments, ValueTask>?" default="null">
+  Event raised when the circuit transitions to a `HalfOpen` state.
+  
+  **Note**: These events are invoked with eventual consistency.
+</ParamField>
+
+<ParamField path="ManualControl" type="CircuitBreakerManualControl?" default="null">
+  Manual control for the circuit breaker.
+  
+  Allows programmatic control to isolate or close the circuit.
+</ParamField>
+
+<ParamField path="StateProvider" type="CircuitBreakerStateProvider?" default="null">
+  State provider for the circuit breaker.
+  
+  Allows monitoring the current state of the circuit.
+</ParamField>
+
+## Extension Methods
+
+Add circuit breaker strategies to a resilience pipeline:
+
+```csharp
+public static ResiliencePipelineBuilder AddCircuitBreaker(
+    this ResiliencePipelineBuilder builder,
+    CircuitBreakerStrategyOptions options)
+```
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddCircuitBreaker<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    CircuitBreakerStrategyOptions<TResult> options)
+```
+
+## Circuit States
+
+The circuit breaker can be in one of three states:
+
+- **Closed**: Normal operation, requests flow through
+- **Open**: Circuit is broken, requests are immediately rejected
+- **HalfOpen**: Testing if the circuit should close after the break duration
+
+## Usage Example
+
+```csharp
+var circuitBreakerOptions = new CircuitBreakerStrategyOptions
+{
+    FailureRatio = 0.5,
+    MinimumThroughput = 10,
+    SamplingDuration = TimeSpan.FromSeconds(30),
+    BreakDuration = TimeSpan.FromSeconds(10),
+    OnOpened = args =>
+    {
+        Console.WriteLine("Circuit breaker opened!");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddCircuitBreaker(circuitBreakerOptions)
+    .Build();
+```

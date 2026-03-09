@@ -1,0 +1,521 @@
+---
+title: Hedging Strategy  
+description: Execute parallel actions to improve responsiveness by racing multiple attempts
+---
+
+# Hedging Strategy
+
+The hedging **reactive** resilience strategy enables the re-execution of callbacks if the previous execution takes too long. This approach can boost overall system responsiveness at the cost of increased resource utilization.
+
+<Warning>
+  Do not start any background work when executing actions using the hedging strategy. This strategy can spawn multiple parallel tasks, potentially starting multiple background tasks.
+</Warning>
+
+## When to Use Hedging
+
+Use the hedging strategy when:
+
+- Low latency is critical and you can afford extra resource usage
+- Dealing with unpredictable response times from services
+- You want to hedge against slow responses (tail latency)
+- Some redundancy in operations is acceptable
+- The operation is idempotent (can be safely executed multiple times)
+
+<Note>
+  If low latency is not critical, consider using the [retry strategy](retry) instead, which is more resource-efficient.
+</Note>
+
+## Installation
+
+```bash
+dotnet add package Polly.Core
+```
+
+## Hedging Modes
+
+The hedging strategy supports multiple concurrency modes:
+
+<CardGroup cols={2}>
+  <Card title="Latency Mode" icon="gauge">
+    Delays between hedged attempts. Default behavior with configurable delay.
+  </Card>
+  
+  <Card title="Fallback Mode" icon="arrow-down">
+    Only one execution at a time. New attempt starts only after previous fails.
+  </Card>
+  
+  <Card title="Parallel Mode" icon="layer-group">
+    All attempts execute simultaneously. Fastest wins.
+  </Card>
+  
+  <Card title="Dynamic Mode" icon="sliders">
+    Behavior changes based on runtime conditions using `DelayGenerator`.
+  </Card>
+</CardGroup>
+
+## Usage
+
+### Basic Hedging (Latency Mode)
+
+```csharp
+// Default: hedges after 2 seconds, up to 1 additional attempt
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddHedging(new HedgingStrategyOptions<HttpResponseMessage>())
+    .Build();
+
+var response = await pipeline.ExecuteAsync(async ct =>
+{
+    return await httpClient.GetAsync("https://api.example.com/data", ct);
+}, cancellationToken);
+```
+
+### Custom Hedging Configuration
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+        .Handle<HttpRequestException>()
+        .HandleResult(r => r.StatusCode == HttpStatusCode.InternalServerError),
+    MaxHedgedAttempts = 3,  // Total: 1 primary + 3 hedged = 4 attempts
+    Delay = TimeSpan.FromSeconds(1),  // Wait 1s before hedging
+    ActionGenerator = static args =>
+    {
+        Console.WriteLine($"Executing hedged attempt {args.AttemptNumber}");
+        
+        // Return the original callback
+        return () => args.Callback(args.ActionContext);
+    }
+};
+```
+
+### Hedging with Events
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    OnHedging = static args =>
+    {
+        Console.WriteLine($"Hedging attempt {args.AttemptNumber}");
+        // Log to monitoring, send metrics
+        return default;
+    }
+};
+```
+
+### Parallel Mode (Zero Delay)
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    MaxHedgedAttempts = 2,
+    Delay = TimeSpan.Zero  // All attempts execute immediately
+};
+```
+
+<Warning>
+  Parallel mode consumes the most resources. Use only when absolutely necessary for critical low-latency operations.
+</Warning>
+
+### Fallback Mode (Negative Delay)
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    MaxHedgedAttempts = 3,
+    Delay = TimeSpan.FromMilliseconds(-1)  // Sequential execution only
+};
+```
+
+### Dynamic Mode
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    MaxHedgedAttempts = 3,
+    DelayGenerator = args =>
+    {
+        var delay = args.AttemptNumber switch
+        {
+            0 or 1 => TimeSpan.Zero,  // First two attempts in parallel
+            _ => TimeSpan.FromMilliseconds(-1)  // Remaining sequential
+        };
+        
+        return new ValueTask<TimeSpan>(delay);
+    }
+};
+```
+
+### Custom Action Generator
+
+```csharp
+var options = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    ActionGenerator = args =>
+    {
+        // Access primary context data
+        var customData = args.PrimaryContext.Properties
+            .GetValue(customDataKey, "default");
+        
+        Console.WriteLine($"Hedging attempt {args.AttemptNumber}");
+        
+        // Return custom action
+        return async () =>
+        {
+            try
+            {
+                var response = await AlternativeServiceCallAsync(
+                    args.ActionContext.CancellationToken);
+                return Outcome.FromResult(response);
+            }
+            catch (Exception ex)
+            {
+                return Outcome.FromException<HttpResponseMessage>(ex);
+            }
+        };
+    }
+};
+```
+
+## Configuration Options
+
+<ParamField path="ShouldHandle" type="Predicate" default="Any exceptions except OperationCanceledException">
+  Defines which results and/or exceptions should trigger hedging.
+</ParamField>
+
+<ParamField path="MaxHedgedAttempts" type="int" default="1">
+  The maximum number of hedged actions to use, in addition to the original action.
+</ParamField>
+
+<ParamField path="Delay" type="TimeSpan" default="2 seconds">
+  The waiting time before spawning a new hedged action:
+  - Positive value: Latency mode (delay between attempts)
+  - `TimeSpan.Zero`: Parallel mode (all attempts immediately)
+  - Negative value: Fallback mode (sequential, one at a time)
+</ParamField>
+
+<ParamField path="DelayGenerator" type="Func<HedgingDelayGeneratorArguments, ValueTask<TimeSpan>>" default="null">
+  Dynamically calculates the delay for each hedged attempt. If set, `Delay` is ignored.
+</ParamField>
+
+<ParamField path="ActionGenerator" type="Func<HedgingActionGeneratorArguments, Func<ValueTask<Outcome<TResult>>>>" default="Returns original callback">
+  Generates the action to execute for each hedged attempt. Can return a completely different action.
+</ParamField>
+
+<ParamField path="OnHedging" type="Func<OnHedgingArguments, ValueTask>" default="null">
+  Invoked before the strategy performs each hedged action.
+</ParamField>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Only use for idempotent operations">
+    Hedging executes the same operation multiple times. Ensure your operation is idempotent (safe to execute multiple times without side effects).
+  </Accordion>
+  
+  <Accordion title="Start with latency mode">
+    Begin with latency mode (positive delay) and tune the delay based on your P95/P99 latency metrics. Only move to parallel mode if necessary.
+  </Accordion>
+  
+  <Accordion title="Set appropriate MaxHedgedAttempts">
+    More attempts increase resource usage. Start with 1-2 hedged attempts and increase only if needed.
+  </Accordion>
+  
+  <Accordion title="Respect cancellation tokens">
+    Ensure hedged actions properly respect cancellation tokens so they can be cancelled when a faster attempt succeeds.
+  </Accordion>
+  
+  <Accordion title="Monitor resource usage">
+    Track CPU, memory, and network usage when using hedging, especially in parallel mode.
+  </Accordion>
+  
+  <Accordion title="Consider cost implications">
+    Hedging increases resource usage and can multiply costs for paid APIs. Use judiciously.
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+### HTTP Request with Hedging
+
+```csharp
+public class HedgedHttpClient
+{
+    private readonly HttpClient _httpClient;
+    private readonly ResiliencePipeline<HttpResponseMessage> _pipeline;
+
+    public HedgedHttpClient(HttpClient httpClient)
+    {
+        _httpClient = httpClient;
+        
+        _pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddHedging(new HedgingStrategyOptions<HttpResponseMessage>
+            {
+                ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                    .Handle<HttpRequestException>()
+                    .Handle<TaskCanceledException>()
+                    .HandleResult(r => r.StatusCode == HttpStatusCode.RequestTimeout),
+                MaxHedgedAttempts = 2,
+                Delay = TimeSpan.FromSeconds(1),
+                OnHedging = args =>
+                {
+                    Console.WriteLine(
+                        $"Request taking too long, hedging with attempt {args.AttemptNumber}");
+                    return default;
+                }
+            })
+            .AddTimeout(TimeSpan.FromSeconds(5))
+            .Build();
+    }
+
+    public async Task<HttpResponseMessage> GetAsync(
+        string url, 
+        CancellationToken ct)
+    {
+        return await _pipeline.ExecuteAsync(async token =>
+        {
+            return await _httpClient.GetAsync(url, token);
+        }, ct);
+    }
+}
+```
+
+### Multi-Endpoint Hedging
+
+```csharp
+public class MultiEndpointService
+{
+    private readonly HttpClient _httpClient;
+    private readonly string[] _endpoints = 
+    {
+        "https://primary.api.example.com",
+        "https://secondary.api.example.com",
+        "https://tertiary.api.example.com"
+    };
+
+    public async Task<string> GetDataAsync(CancellationToken ct)
+    {
+        var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddHedging(new HedgingStrategyOptions<HttpResponseMessage>
+            {
+                MaxHedgedAttempts = 2,
+                Delay = TimeSpan.FromSeconds(2),
+                ActionGenerator = args =>
+                {
+                    // Use different endpoint for each attempt
+                    var endpointIndex = args.AttemptNumber % _endpoints.Length;
+                    var endpoint = _endpoints[endpointIndex];
+                    
+                    Console.WriteLine($"Attempt {args.AttemptNumber}: {endpoint}");
+                    
+                    return async () =>
+                    {
+                        try
+                        {
+                            var response = await _httpClient.GetAsync(
+                                endpoint, 
+                                args.ActionContext.CancellationToken);
+                            return Outcome.FromResult(response);
+                        }
+                        catch (Exception ex)
+                        {
+                            return Outcome.FromException<HttpResponseMessage>(ex);
+                        }
+                    };
+                }
+            })
+            .Build();
+
+        var response = await pipeline.ExecuteAsync(async token =>
+        {
+            return await _httpClient.GetAsync(_endpoints[0], token);
+        }, ct);
+
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+}
+```
+
+### Database Query with Hedging
+
+```csharp
+public class HedgedDatabaseService
+{
+    private readonly string _primaryConnectionString;
+    private readonly string _replicaConnectionString;
+    private readonly ResiliencePipeline<List<Customer>> _pipeline;
+
+    public HedgedDatabaseService(
+        string primaryConnectionString,
+        string replicaConnectionString)
+    {
+        _primaryConnectionString = primaryConnectionString;
+        _replicaConnectionString = replicaConnectionString;
+        
+        _pipeline = new ResiliencePipelineBuilder<List<Customer>>()
+            .AddHedging(new HedgingStrategyOptions<List<Customer>>
+            {
+                MaxHedgedAttempts = 1,
+                Delay = TimeSpan.FromMilliseconds(500),  // Hedge after 500ms
+                ActionGenerator = args =>
+                {
+                    if (args.AttemptNumber == 0)
+                    {
+                        // Primary attempt uses original callback
+                        return () => args.Callback(args.ActionContext);
+                    }
+                    
+                    // Hedged attempt queries read replica
+                    return async () =>
+                    {
+                        try
+                        {
+                            await using var connection = new SqlConnection(
+                                _replicaConnectionString);
+                            await connection.OpenAsync(
+                                args.ActionContext.CancellationToken);
+                            
+                            var command = new SqlCommand(
+                                "SELECT * FROM Customers", connection);
+                            var customers = new List<Customer>();
+                            
+                            await using var reader = await command.ExecuteReaderAsync(
+                                args.ActionContext.CancellationToken);
+                            
+                            while (await reader.ReadAsync(
+                                args.ActionContext.CancellationToken))
+                            {
+                                customers.Add(new Customer
+                                {
+                                    Id = reader.GetInt32(0),
+                                    Name = reader.GetString(1)
+                                });
+                            }
+                            
+                            return Outcome.FromResult(customers);
+                        }
+                        catch (Exception ex)
+                        {
+                            return Outcome.FromException<List<Customer>>(ex);
+                        }
+                    };
+                }
+            })
+            .Build();
+    }
+
+    public async Task<List<Customer>> GetCustomersAsync(CancellationToken ct)
+    {
+        return await _pipeline.ExecuteAsync(async token =>
+        {
+            // Query primary database
+            await using var connection = new SqlConnection(
+                _primaryConnectionString);
+            await connection.OpenAsync(token);
+            
+            var command = new SqlCommand("SELECT * FROM Customers", connection);
+            var customers = new List<Customer>();
+            
+            await using var reader = await command.ExecuteReaderAsync(token);
+            
+            while (await reader.ReadAsync(token))
+            {
+                customers.Add(new Customer
+                {
+                    Id = reader.GetInt32(0),
+                    Name = reader.GetString(1)
+                });
+            }
+            
+            return customers;
+        }, ct);
+    }
+}
+```
+
+### Adaptive Hedging
+
+```csharp
+public class AdaptiveHedgingService
+{
+    private readonly HttpClient _httpClient;
+    private double _p95Latency = 1000; // milliseconds
+
+    public async Task<HttpResponseMessage> GetWithAdaptiveHedgingAsync(
+        string url, 
+        CancellationToken ct)
+    {
+        var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+            .AddHedging(new HedgingStrategyOptions<HttpResponseMessage>()
+            {
+                MaxHedgedAttempts = 2,
+                DelayGenerator = args =>
+                {
+                    // Hedge at P95 latency
+                    var delay = TimeSpan.FromMilliseconds(_p95Latency);
+                    return new ValueTask<TimeSpan>(delay);
+                },
+                OnHedging = args =>
+                {
+                    // Update P95 latency based on observed performance
+                    UpdateP95Latency(args);
+                    return default;
+                }
+            })
+            .Build();
+
+        return await pipeline.ExecuteAsync(async token =>
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var response = await _httpClient.GetAsync(url, token);
+            stopwatch.Stop();
+            
+            // Track latency for adaptation
+            TrackLatency(stopwatch.ElapsedMilliseconds);
+            
+            return response;
+        }, ct);
+    }
+
+    private void UpdateP95Latency(OnHedgingArguments args)
+    {
+        // Implement exponential moving average or similar
+        // This is a simplified example
+    }
+
+    private void TrackLatency(long milliseconds)
+    {
+        // Track latencies and calculate P95
+    }
+}
+```
+
+<Accordion title="What's the difference between Hedging and Retry?">
+  - **Retry**: Executes attempts sequentially. Waits for one to fail before trying again.
+  - **Hedging**: Can execute attempts concurrently. Doesn't wait for failure, starts new attempts proactively when things are slow.
+  
+  Hedging is for reducing latency; retry is for overcoming failures.
+</Accordion>
+
+<Accordion title="When should I use parallel mode?">
+  Use parallel mode (`Delay = TimeSpan.Zero`) only when:
+  - Latency is absolutely critical (e.g., real-time trading, gaming)
+  - You can afford the resource cost
+  - The operation is lightweight
+  - You've measured that latency mode isn't sufficient
+</Accordion>
+
+<Accordion title="What happens to slower hedged attempts?">
+  When the fastest attempt succeeds, Polly cancels all other pending attempts. This is why it's crucial that your operations respect the cancellation token.
+</Accordion>
+
+<Accordion title="Can I use different endpoints for hedged attempts?">
+  Yes! Use `ActionGenerator` to create different actions for each attempt. This is useful for:
+  - Trying different service replicas
+  - Falling back to cached data
+  - Using alternative APIs
+</Accordion>
+
+<Accordion title="How do I choose the hedging delay?">
+  Start with your P95 or P99 latency. If 95% of requests complete in 500ms, set delay to 500ms. Tune based on observed performance and resource usage.
+</Accordion>

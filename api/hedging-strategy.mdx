@@ -1,0 +1,179 @@
+---
+title: Hedging Strategy
+description: API reference for Polly's hedging resilience strategy
+---
+
+The hedging strategy executes parallel actions when the primary action takes too long, accepting the first successful result.
+
+## HedgingStrategyOptions
+
+Configures the hedging resilience strategy.
+
+```csharp
+public class HedgingStrategyOptions<TResult> : ResilienceStrategyOptions
+```
+
+### Properties
+
+<ParamField path="Delay" type="TimeSpan" default="00:00:02">
+  The maximum waiting time before spawning a new hedged action.
+  
+  Special values:
+  - `TimeSpan.Zero`: Create all hedged actions at once
+  - `Timeout.InfiniteTimeSpan`: Never create a new action before the old one finishes
+  
+  Use `DelayGenerator` for greater control over hedging delays.
+</ParamField>
+
+<ParamField path="MaxHedgedAttempts" type="int" default="1">
+  The maximum number of hedged actions to use, in addition to the original action.
+  
+  - Must be between 1 and 10
+  - Default is 1
+</ParamField>
+
+<ParamField path="ShouldHandle" type="Func<HedgingPredicateArguments<TResult>, ValueTask<bool>>" required>
+  A predicate that determines whether hedging should be executed for a given outcome.
+  
+  Default: Hedges on any exception except `OperationCanceledException`.
+</ParamField>
+
+<ParamField path="ActionGenerator" type="Func<HedgingActionGeneratorArguments<TResult>, Func<ValueTask<Outcome<TResult>>>?>" required>
+  A generator that creates hedged actions.
+  
+  Default: Executes the original callback that was passed to the hedging resilience strategy.
+</ParamField>
+
+<ParamField path="DelayGenerator" type="Func<HedgingDelayGeneratorArguments, ValueTask<TimeSpan>>?" default="null">
+  A generator that produces hedging delays for each hedged action.
+  
+  The `DelayGenerator` takes precedence over `Delay`. If specified, `Delay` is ignored.
+</ParamField>
+
+<ParamField path="OnHedging" type="Func<OnHedgingArguments<TResult>, ValueTask>?" default="null">
+  An event raised when hedging is performed.
+  
+  Hedging is executed when:
+  - The current attempt outcome is not successful and `ShouldHandle` returns `true`, OR
+  - The current attempt did not finish within the `Delay`
+</ParamField>
+
+## Extension Methods
+
+Add hedging strategies to a resilience pipeline:
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddHedging<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    HedgingStrategyOptions<TResult> options)
+```
+
+## OnHedgingArguments
+
+Arguments passed to the `OnHedging` callback.
+
+```csharp
+public readonly struct OnHedgingArguments<TResult>
+{
+    public ResilienceContext PrimaryContext { get; }
+    public ResilienceContext ActionContext { get; }
+    public int AttemptNumber { get; }
+}
+```
+
+- **PrimaryContext**: The context received by the hedging strategy
+- **ActionContext**: A cloned context used for the hedged action
+- **AttemptNumber**: The zero-based hedging attempt number
+
+## Usage Examples
+
+### Basic Hedging
+
+```csharp
+var hedgingOptions = new HedgingStrategyOptions<string>
+{
+    MaxHedgedAttempts = 2,
+    Delay = TimeSpan.FromSeconds(1),
+    OnHedging = args =>
+    {
+        Console.WriteLine($"Hedging attempt {args.AttemptNumber}");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder<string>()
+    .AddHedging(hedgingOptions)
+    .Build();
+
+var result = await pipeline.ExecuteAsync(async ct =>
+{
+    return await FetchDataAsync(ct);
+});
+```
+
+### Hedging with Multiple Endpoints
+
+```csharp
+var endpoints = new[] { "api1.example.com", "api2.example.com", "api3.example.com" };
+var endpointIndex = 0;
+
+var hedgingOptions = new HedgingStrategyOptions<HttpResponseMessage>
+{
+    MaxHedgedAttempts = 2,
+    Delay = TimeSpan.FromMilliseconds(500),
+    ActionGenerator = args =>
+    {
+        var endpoint = endpoints[Interlocked.Increment(ref endpointIndex) % endpoints.Length];
+        
+        return () => ExecuteRequestAsync(endpoint, args.ActionContext.CancellationToken);
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddHedging(hedgingOptions)
+    .Build();
+```
+
+### Dynamic Hedging Delays
+
+```csharp
+var hedgingOptions = new HedgingStrategyOptions<Data>
+{
+    MaxHedgedAttempts = 3,
+    DelayGenerator = args =>
+    {
+        // Exponential delay: 100ms, 200ms, 400ms
+        var delay = TimeSpan.FromMilliseconds(100 * Math.Pow(2, args.AttemptNumber));
+        return new ValueTask<TimeSpan>(delay);
+    }
+};
+```
+
+### Conditional Hedging
+
+```csharp
+var hedgingOptions = new HedgingStrategyOptions<ApiResponse>
+{
+    MaxHedgedAttempts = 2,
+    Delay = TimeSpan.FromSeconds(1),
+    ShouldHandle = args => new ValueTask<bool>(
+        args.Outcome.Result?.StatusCode == 408 || // Request Timeout
+        args.Outcome.Result?.StatusCode == 429 || // Too Many Requests
+        args.Outcome.Exception is HttpRequestException
+    )
+};
+```
+
+## How Hedging Works
+
+1. The primary action starts executing
+2. If the action doesn't complete within `Delay` (or doesn't succeed):
+   - A hedged action is spawned in parallel
+3. This continues up to `MaxHedgedAttempts` additional actions
+4. The first successful result is returned
+5. Remaining actions are cancelled
+
+Hedging is useful for:
+- Reducing tail latency
+- Improving reliability when multiple redundant services are available
+- Load balancing across multiple endpoints

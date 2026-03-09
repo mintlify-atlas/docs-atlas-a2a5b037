@@ -1,0 +1,320 @@
+---
+title: Custom Proactive Strategy
+description: Learn how to implement a proactive resilience strategy that makes execution decisions
+---
+
+## Overview
+
+Proactive strategies make decisions to cancel or reject callback execution without focusing on individual results. This guide demonstrates how to create a **Timing Strategy** that tracks execution times and reports when thresholds are exceeded.
+
+<Info>
+Proactive strategies inherit from `ResilienceStrategy` (non-generic) and work across various result types.
+</Info>
+
+## Implementation
+
+### Strategy Class
+
+Proactive strategies derive from the non-generic `ResilienceStrategy` base class:
+
+```csharp
+// Strategies should be internal and not exposed in the library's public API.
+// Configure the strategy through extension methods and options.
+internal sealed class TimingResilienceStrategy : ResilienceStrategy
+{
+    private readonly TimeSpan _threshold;
+    private readonly Func<OnThresholdExceededArguments, ValueTask>? _onThresholdExceeded;
+    private readonly ResilienceStrategyTelemetry _telemetry;
+
+    public TimingResilienceStrategy(
+        TimeSpan threshold,
+        Func<OnThresholdExceededArguments, ValueTask>? onThresholdExceeded,
+        ResilienceStrategyTelemetry telemetry)
+    {
+        _threshold = threshold;
+        _telemetry = telemetry;
+        _onThresholdExceeded = onThresholdExceeded;
+    }
+
+    protected override async ValueTask<Outcome<TResult>> ExecuteCore<TResult, TState>(
+        Func<ResilienceContext, TState, ValueTask<Outcome<TResult>>> callback,
+        ResilienceContext context,
+        TState state)
+    {
+        var stopwatch = Stopwatch.StartNew();
+
+        // Execute the given callback and adhere to the ContinueOnCapturedContext property value.
+        Outcome<TResult> outcome = await callback(context, state).ConfigureAwait(context.ContinueOnCapturedContext);
+
+        if (stopwatch.Elapsed > _threshold)
+        {
+            // Bundle information about the event into arguments.
+            var args = new OnThresholdExceededArguments(context, _threshold, stopwatch.Elapsed);
+
+            // Report this as a resilience event if the execution took longer than the threshold.
+            _telemetry.Report(
+                new ResilienceEvent(ResilienceEventSeverity.Warning, "ExecutionThresholdExceeded"),
+                context,
+                args);
+
+            if (_onThresholdExceeded is not null)
+            {
+                await _onThresholdExceeded(args).ConfigureAwait(context.ContinueOnCapturedContext);
+            }
+        }
+
+        // Return the outcome directly.
+        return outcome;
+    }
+}
+```
+
+<Note>
+Proactive strategies measure or control execution behavior rather than handling specific result types.
+</Note>
+
+### Event Arguments
+
+Define arguments to encapsulate event details:
+
+```csharp
+// Structs for arguments encapsulate details about specific events within the resilience strategy.
+// Relevant properties to the event can be exposed. In this event, the actual execution time and the exceeded threshold are included.
+public readonly struct OnThresholdExceededArguments
+{
+    public OnThresholdExceededArguments(ResilienceContext context, TimeSpan threshold, TimeSpan duration)
+    {
+        Context = context;
+        Threshold = threshold;
+        Duration = duration;
+    }
+
+    public TimeSpan Threshold { get; }
+
+    public TimeSpan Duration { get; }
+
+    // As per convention, all arguments should provide a "Context" property.
+    public ResilienceContext Context { get; }
+}
+```
+
+<Tip>
+Arguments should always have an `Arguments` suffix and include a `Context` property. This design makes the API more extensible and maintainable.
+</Tip>
+
+## Options
+
+<Steps>
+  <Step title="Define Options Class">
+    Create a public options class that inherits from `ResilienceStrategyOptions`:
+
+    ```csharp
+    public class TimingStrategyOptions : ResilienceStrategyOptions
+    {
+        public TimingStrategyOptions()
+        {
+            // Assign a default name to the options for more detailed telemetry insights.
+            Name = "Timing";
+        }
+
+        // Apply validation attributes to guarantee the options' validity.
+        // The pipeline will handle validation automatically during its construction.
+        [Range(typeof(TimeSpan), "00:00:00", "1.00:00:00")]
+        [Required]
+        public TimeSpan? Threshold { get; set; }
+
+        // Provide the delegate to be called when the threshold is surpassed.
+        // Ideally, arguments should share the delegate's name, but with an "Arguments" suffix.
+        public Func<OnThresholdExceededArguments, ValueTask>? OnThresholdExceeded { get; set; }
+    }
+    ```
+  </Step>
+
+  <Step title="Use Validation Attributes">
+    Apply data annotation attributes to validate options:
+    - `[Required]` for mandatory properties
+    - `[Range]` for value constraints
+    - Pipeline automatically validates during construction
+  </Step>
+</Steps>
+
+<Warning>
+Options represent the public contract with consumers. Use validation attributes to ensure correctness.
+</Warning>
+
+## Extension Methods
+
+Proactive strategies can use a single extension method that works for both generic and non-generic builders:
+
+```csharp
+public static class TimingResilienceStrategyBuilderExtensions
+{
+    // The extensions should return the builder to support a fluent API.
+    // For proactive strategies, we can target both "ResiliencePipelineBuilderBase" and "ResiliencePipelineBuilder<T>"
+    // using generic constraints.
+    public static TBuilder AddTiming<TBuilder>(this TBuilder builder, TimingStrategyOptions options)
+        where TBuilder : ResiliencePipelineBuilderBase
+    {
+        // Add the strategy through the AddStrategy method. This method accepts a factory delegate
+        // and automatically validates the options.
+        return builder.AddStrategy(
+            context =>
+            {
+                // The "context" provides various properties for the strategy's use.
+                // In this case, we simply use the "Telemetry" property and pass it to the strategy.
+                // The Threshold and OnThresholdExceeded values are sourced from the options.
+                var strategy = new TimingResilienceStrategy(
+                    options.Threshold!.Value,
+                    options.OnThresholdExceeded,
+                    context.Telemetry);
+
+                return strategy;
+            },
+            options);
+    }
+}
+```
+
+<Info>
+By using generic constraints on `ResiliencePipelineBuilderBase`, a single extension method supports both `ResiliencePipelineBuilder` and `ResiliencePipelineBuilder<T>`.
+</Info>
+
+## Usage Example
+
+```csharp
+// Add the proactive strategy to the builder
+var pipeline = new ResiliencePipelineBuilder()
+    // This is custom extension defined in this sample
+    .AddTiming(new TimingStrategyOptions
+    {
+        Threshold = TimeSpan.FromSeconds(1),
+        OnThresholdExceeded = args =>
+        {
+            Console.WriteLine("Execution threshold exceeded!");
+            return default;
+        },
+    })
+    .Build();
+```
+
+## Complete Example
+
+Here's how the timing strategy works in a complete scenario:
+
+<Steps>
+  <Step title="Create Pipeline">
+    Build a resilience pipeline with the timing strategy:
+
+    ```csharp
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddTiming(new TimingStrategyOptions
+        {
+            Threshold = TimeSpan.FromSeconds(1),
+            OnThresholdExceeded = args =>
+            {
+                Console.WriteLine($"Execution took {args.Duration.TotalSeconds}s, "
+                    + $"exceeding threshold of {args.Threshold.TotalSeconds}s");
+                return default;
+            },
+        })
+        .Build();
+    ```
+  </Step>
+
+  <Step title="Execute Operations">
+    Use the pipeline to execute operations:
+
+    ```csharp
+    // Fast operation - no event triggered
+    await pipeline.ExecuteAsync(async ct =>
+    {
+        await Task.Delay(500, ct);
+        return "Fast operation";
+    });
+
+    // Slow operation - event triggered
+    await pipeline.ExecuteAsync(async ct =>
+    {
+        await Task.Delay(1500, ct);
+        return "Slow operation";
+    });
+    ```
+  </Step>
+
+  <Step title="Monitor Results">
+    The strategy automatically monitors execution time and triggers events when thresholds are exceeded.
+  </Step>
+</Steps>
+
+## Key Differences from Reactive Strategies
+
+<AccordionGroup>
+  <Accordion title="Base Class">
+    - **Proactive**: Inherit from `ResilienceStrategy` (non-generic)
+    - **Reactive**: Inherit from `ResilienceStrategy<T>` (generic)
+  </Accordion>
+
+  <Accordion title="Arguments">
+    - **Proactive**: Arguments only need `Context` property
+    - **Reactive**: Arguments need both `Context` and `Outcome` properties
+  </Accordion>
+
+  <Accordion title="Focus">
+    - **Proactive**: Monitor or control execution behavior
+    - **Reactive**: Handle specific results or exceptions
+  </Accordion>
+
+  <Accordion title="Extension Methods">
+    - **Proactive**: Single extension using `ResiliencePipelineBuilderBase`
+    - **Reactive**: Separate extensions for generic and non-generic builders
+  </Accordion>
+</AccordionGroup>
+
+## Key Takeaways
+
+<CardGroup cols={2}>
+  <Card title="Strategy Implementation" icon="code">
+    - Inherit from non-generic `ResilienceStrategy`
+    - Keep the strategy class internal
+    - Measure or control execution behavior
+    - Report events using `ResilienceStrategyTelemetry`
+  </Card>
+
+  <Card title="Arguments" icon="brackets-curly">
+    - Use readonly structs
+    - Always include `Context` property
+    - Add event-specific properties
+    - Follow naming: `{DelegateName}Arguments`
+  </Card>
+
+  <Card title="Options" icon="sliders">
+    - Inherit from `ResilienceStrategyOptions`
+    - Use validation attributes
+    - Provide sensible defaults
+    - Set default strategy name
+  </Card>
+
+  <Card title="Extension Methods" icon="plug">
+    - Target `ResiliencePipelineBuilderBase`
+    - Return builder for fluent API
+    - Use `AddStrategy` for registration
+    - Automatic options validation
+  </Card>
+</CardGroup>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Timing Strategy Sample" icon="github" href="https://github.com/App-vNext/Polly/tree/main/samples/Extensibility/Proactive">
+    Complete working example from this guide
+  </Card>
+  <Card title="Timeout Strategy Source" icon="code" href="https://github.com/App-vNext/Polly/tree/main/src/Polly.Core/Timeout">
+    Built-in timeout strategy implementation
+  </Card>
+  <Card title="Rate Limiter Source" icon="code" href="https://github.com/App-vNext/Polly/tree/main/src/Polly.RateLimiting">
+    Built-in rate limiter strategy implementation
+  </Card>
+  <Card title="Extensibility Overview" icon="book" href="/extensibility/overview">
+    Learn about extensibility basics
+  </Card>
+</CardGroup>

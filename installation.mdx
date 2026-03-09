@@ -1,0 +1,180 @@
+---
+title: Installation
+description: Install Polly packages for .NET resilience and transient-fault-handling
+---
+
+Polly is available as a collection of NuGet packages. Install the packages you need based on your requirements.
+
+## Package Overview
+
+Polly v8 is distributed across multiple NuGet packages:
+
+<CardGroup cols={2}>
+  <Card title="Polly.Core" icon="box" href="#pollycore">
+    Core abstractions and built-in resilience strategies
+  </Card>
+  <Card title="Polly.Extensions" icon="plug" href="#pollyextensions">
+    Dependency injection and telemetry support
+  </Card>
+  <Card title="Polly.RateLimiting" icon="gauge" href="#pollyratelimiting">
+    Integration with System.Threading.RateLimiting APIs
+  </Card>
+  <Card title="Polly.Testing" icon="flask" href="#pollytesting">
+    Testing utilities for resilience pipelines
+  </Card>
+</CardGroup>
+
+## Polly.Core
+
+The core package provides the fundamental abstractions and built-in resilience strategies including Retry, Circuit Breaker, Hedging, Timeout, Chaos, and Fallback.
+
+<Info>
+  **Minimum Requirements**: .NET Standard 2.0, .NET Framework 4.6.2+, .NET 6+, .NET 8+
+</Info>
+
+<Steps>
+  <Step title="Install via .NET CLI">
+    ```bash
+    dotnet add package Polly.Core
+    ```
+  </Step>
+  
+  <Step title="Or use NuGet Package Manager Console">
+    ```bash
+    Install-Package Polly.Core
+    ```
+  </Step>
+  
+  <Step title="Or add to your .csproj file">
+    ```xml
+    <ItemGroup>
+      <PackageReference Include="Polly.Core" Version="8.*" />
+    </ItemGroup>
+    ```
+  </Step>
+</Steps>
+
+### Target Frameworks
+
+Polly.Core supports multiple target frameworks:
+
+- .NET 8.0+
+- .NET 6.0+
+- .NET Standard 2.0
+- .NET Framework 4.7.2
+- .NET Framework 4.6.2
+
+<Note>
+  For .NET 8.0 and later, Polly.Core is AOT (Ahead-of-Time) compatible, making it suitable for native compilation scenarios.
+</Note>
+
+## Polly.Extensions
+
+Provides integration with Microsoft.Extensions.DependencyInjection for managing resilience pipelines and adds telemetry support with built-in logging and metrics.
+
+<CodeGroup>
+```bash .NET CLI
+dotnet add package Polly.Extensions
+```
+
+```bash NuGet Package Manager
+Install-Package Polly.Extensions
+```
+
+```xml PackageReference
+<ItemGroup>
+  <PackageReference Include="Polly.Extensions" Version="8.*" />
+</ItemGroup>
+```
+</CodeGroup>
+
+<Tip>
+  Install this package if you're using ASP.NET Core or any application that uses `IServiceCollection` for dependency injection.
+</Tip>
+
+## Polly.RateLimiting
+
+Integrates Polly with .NET's `System.Threading.RateLimiting` APIs, providing concurrency limiters and sliding window rate limiters.
+
+<CodeGroup>
+```bash .NET CLI
+dotnet add package Polly.RateLimiting
+```
+
+```bash NuGet Package Manager
+Install-Package Polly.RateLimiting
+```
+
+```xml PackageReference
+<ItemGroup>
+  <PackageReference Include="Polly.RateLimiting" Version="8.*" />
+</ItemGroup>
+```
+</CodeGroup>
+
+## Polly.Testing
+
+Provides utilities for testing resilience pipelines, allowing you to assert on pipeline composition and strategy configuration.
+
+<CodeGroup>
+```bash .NET CLI
+dotnet add package Polly.Testing
+```
+
+```bash NuGet Package Manager
+Install-Package Polly.Testing
+```
+
+```xml PackageReference
+<ItemGroup>
+  <PackageReference Include="Polly.Testing" Version="8.*" />
+</ItemGroup>
+```
+</CodeGroup>
+
+<Warning>
+  This package is intended for test projects only. Do not include it in production code.
+</Warning>
+
+## Complete Installation
+
+For a full-featured installation with all capabilities, install both `Polly.Core` and `Polly.Extensions`:
+
+<CodeGroup>
+```bash .NET CLI
+dotnet add package Polly.Core
+dotnet add package Polly.Extensions
+```
+
+```bash NuGet Package Manager
+Install-Package Polly.Core
+Install-Package Polly.Extensions
+```
+
+```xml PackageReference
+<ItemGroup>
+  <PackageReference Include="Polly.Core" Version="8.*" />
+  <PackageReference Include="Polly.Extensions" Version="8.*" />
+</ItemGroup>
+```
+</CodeGroup>
+
+## Legacy Polly Package
+
+The `Polly` package (without `.Core` suffix) contains the legacy v7 API. If you're starting a new project, use the v8 packages listed above.
+
+<Info>
+  For migration from v7 to v8, see the [migration guide](https://www.pollydocs.org/migration-v8).
+</Info>
+
+## Verify Installation
+
+After installation, verify that Polly is available by adding this using statement to your code:
+
+```csharp
+using Polly;
+```
+
+## Next Steps
+
+Now that you have Polly installed, proceed to the [Quickstart](/quickstart) guide to build your first resilience pipeline.

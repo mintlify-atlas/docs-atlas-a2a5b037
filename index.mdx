@@ -1,97 +1,133 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Introduction
+description: A .NET resilience and transient-fault-handling library for building fault-tolerant applications
 ---
 
-## Setting up
+Polly is a powerful .NET resilience and transient-fault-handling library that allows developers to express resilience strategies such as Retry, Circuit Breaker, Hedging, Timeout, Rate Limiter, and Fallback in a fluent and thread-safe manner.
 
-Get your documentation site up and running in minutes.
+<Note>
+  Polly is part of the [.NET Foundation](https://www.dotnetfoundation.org/about) and supports .NET Standard 1.1, 2.0+, .NET Core, .NET Framework, and .NET 6+.
+</Note>
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+## What is Polly?
 
-## Make it yours
+Modern applications often depend on external services, databases, and APIs that can fail temporarily or become unavailable. Polly helps you handle these transient faults gracefully by providing a comprehensive set of resilience strategies that you can combine and configure to match your specific requirements.
 
-Design a docs site that looks great and empowers your users.
+With Polly, you can:
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+- **Retry operations** that fail due to transient faults
+- **Break circuits** when a system is under stress to prevent cascading failures
+- **Add timeouts** to prevent operations from hanging indefinitely
+- **Rate limit** requests to protect your services from overload
+- **Provide fallback values** when operations fail
+- **Hedge requests** by executing parallel operations and taking the fastest response
+- **Inject chaos** to test your application's resilience
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Retry Strategy" icon="rotate-right" href="/strategies/retry">
+    Automatically retry failed operations with exponential backoff and jitter
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Circuit Breaker" icon="circle-exclamation" href="/strategies/circuit-breaker">
+    Prevent cascading failures by breaking the circuit when fault thresholds are exceeded
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Timeout Management" icon="clock" href="/strategies/timeout">
+    Set time limits on operations to prevent them from running indefinitely
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Rate Limiting" icon="gauge-high" href="/strategies/rate-limiter">
+    Control the rate of requests with multiple rate limiting algorithms
   </Card>
-</Columns>
+  <Card title="Fallback Handlers" icon="shield-halved" href="/strategies/fallback">
+    Provide alternative values or actions when operations fail
+  </Card>
+  <Card title="Hedging" icon="code-fork" href="/strategies/hedging">
+    Execute parallel actions and use the fastest successful response
+  </Card>
+  <Card title="Chaos Engineering" icon="flask" href="/chaos/overview">
+    Test your application's resilience by injecting controlled faults
+  </Card>
+  <Card title="Telemetry Support" icon="chart-line" href="/advanced/telemetry">
+    Built-in telemetry and monitoring for all resilience strategies
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## How Polly Works
 
-Everything you need to create world-class documentation.
+Polly uses a **resilience pipeline** pattern that combines one or more **resilience strategies** into a unified execution flow. You build pipelines using a fluent builder API:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+```csharp
+// Create a resilience pipeline with retry and timeout strategies
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1),
+        BackoffType = DelayBackoffType.Exponential
+    })
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
 
-## Need inspiration?
+// Execute your code through the pipeline
+await pipeline.ExecuteAsync(async token =>
+{
+    // Your code here - Polly handles retries, timeouts, etc.
+    return await httpClient.GetAsync("https://api.example.com/data", token);
+});
+```
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## NuGet Packages
+
+Polly is distributed as a set of NuGet packages:
+
+| Package | Purpose |
+| ------- | ------- |
+| **Polly.Core** | Core abstractions and built-in resilience strategies |
+| **Polly.Extensions** | Dependency injection and telemetry integration |
+| **Polly.RateLimiting** | Integration with System.Threading.RateLimiting APIs |
+| **Polly.Testing** | Testing utilities for Polly pipelines |
+| **Polly** | Legacy v7 API for backward compatibility |
+
+<Info>
+  This documentation covers Polly v8, which introduces a new, more powerful API. If you're using Polly v7, see the [migration guide](/migration/v8-migration-guide).
+</Info>
+
+## Why Choose Polly?
+
+<AccordionGroup>
+  <Accordion title="Battle-tested and widely adopted">
+    Polly is used by thousands of applications worldwide, including Microsoft's own services. It has been refined over years of production use.
+  </Accordion>
+  <Accordion title="Flexible and composable">
+    Combine multiple resilience strategies in any order to create sophisticated fault-handling behaviors tailored to your needs.
+  </Accordion>
+  <Accordion title="Performance-focused">
+    Designed for high-performance scenarios with minimal allocation and overhead. Supports async/await throughout.
+  </Accordion>
+  <Accordion title="Comprehensive telemetry">
+    Built-in support for logging, metrics, and distributed tracing to help you understand your application's resilience.
+  </Accordion>
+  <Accordion title="Dependency injection ready">
+    First-class support for Microsoft.Extensions.DependencyInjection with lifecycle management and configuration.
+  </Accordion>
+  <Accordion title="Extensible">
+    Create custom resilience strategies to address unique requirements in your application.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Polly and set up your first project
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Build your first resilience pipeline in minutes
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/resilience-pipelines">
+    Learn about resilience pipelines and strategies
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/polly-core">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>

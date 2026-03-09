@@ -1,0 +1,458 @@
+---
+title: Polly.RateLimiting
+description: Rate limiting strategies for controlling request throughput
+---
+
+The `Polly.RateLimiting` package provides rate limiting capabilities using the .NET `System.Threading.RateLimiting` library, allowing you to control the rate of executions through your resilience pipelines.
+
+## Installation
+
+```bash
+dotnet add package Polly.RateLimiting
+```
+
+## Extension Methods
+
+### AddRateLimiter
+
+Adds a rate limiter to the resilience pipeline.
+
+```csharp
+public static TBuilder AddRateLimiter<TBuilder>(
+    this TBuilder builder,
+    RateLimiterStrategyOptions options)
+    where TBuilder : ResiliencePipelineBuilderBase
+```
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance
+</ParamField>
+
+<ParamField path="options" type="RateLimiterStrategyOptions" required>
+  The rate limiter strategy options
+</ParamField>
+
+**Returns:** The builder instance with the rate limiter added.
+
+**Example:**
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        RateLimiter = args =>
+        {
+            return myRateLimiter.AcquireAsync(cancellationToken: args.Context.CancellationToken);
+        },
+        OnRejected = args =>
+        {
+            Console.WriteLine("Rate limit exceeded");
+            return default;
+        }
+    })
+    .Build();
+```
+
+### AddRateLimiter (with RateLimiter instance)
+
+Adds a rate limiter instance directly to the pipeline.
+
+```csharp
+public static TBuilder AddRateLimiter<TBuilder>(
+    this TBuilder builder,
+    RateLimiter limiter)
+    where TBuilder : ResiliencePipelineBuilderBase
+```
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance
+</ParamField>
+
+<ParamField path="limiter" type="RateLimiter" required>
+  The rate limiter to use
+</ParamField>
+
+**Example:**
+
+```csharp
+var limiter = new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+{
+    PermitLimit = 100,
+    QueueLimit = 50
+});
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(limiter)
+    .Build();
+```
+
+### AddConcurrencyLimiter
+
+Adds a concurrency limiter to the pipeline.
+
+```csharp
+public static TBuilder AddConcurrencyLimiter<TBuilder>(
+    this TBuilder builder,
+    int permitLimit,
+    int queueLimit = 0)
+    where TBuilder : ResiliencePipelineBuilderBase
+```
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance
+</ParamField>
+
+<ParamField path="permitLimit" type="int" required>
+  Maximum number of permits that can be leased concurrently
+</ParamField>
+
+<ParamField path="queueLimit" type="int" default="0">
+  Maximum number of permits that can be queued concurrently
+</ParamField>
+
+**Example:**
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddConcurrencyLimiter(permitLimit: 100, queueLimit: 50)
+    .Build();
+```
+
+### AddConcurrencyLimiter (with options)
+
+Adds a concurrency limiter with detailed options.
+
+```csharp
+public static TBuilder AddConcurrencyLimiter<TBuilder>(
+    this TBuilder builder,
+    ConcurrencyLimiterOptions options)
+    where TBuilder : ResiliencePipelineBuilderBase
+```
+
+<ParamField path="builder" type="TBuilder" required>
+  The builder instance
+</ParamField>
+
+<ParamField path="options" type="ConcurrencyLimiterOptions" required>
+  The concurrency limiter options
+</ParamField>
+
+**Example:**
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddConcurrencyLimiter(new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 100,
+        QueueLimit = 50,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+    })
+    .Build();
+```
+
+## Configuration Classes
+
+### RateLimiterStrategyOptions
+
+Options for configuring the rate limiter strategy.
+
+```csharp
+public class RateLimiterStrategyOptions : ResilienceStrategyOptions
+{
+    public Func<RateLimiterArguments, ValueTask<RateLimitLease>>? RateLimiter { get; set; }
+    public ConcurrencyLimiterOptions DefaultRateLimiterOptions { get; set; }
+    public Func<OnRateLimiterRejectedArguments, ValueTask>? OnRejected { get; set; }
+}
+```
+
+#### Properties
+
+**RateLimiter**
+
+A delegate that produces a `RateLimitLease`. If `null`, the strategy will use a `ConcurrencyLimiter` created with `DefaultRateLimiterOptions`.
+
+- **Type:** `Func<RateLimiterArguments, ValueTask<RateLimitLease>>?`
+- **Default:** `null`
+
+**DefaultRateLimiterOptions**
+
+Options for the default concurrency limiter used when `RateLimiter` is `null`.
+
+- **Type:** `ConcurrencyLimiterOptions`
+- **Default:** `PermitLimit = 1000, QueueLimit = 0`
+
+**OnRejected**
+
+An event raised when execution is rejected by the rate limiter.
+
+- **Type:** `Func<OnRateLimiterRejectedArguments, ValueTask>?`
+- **Default:** `null`
+
+**Example:**
+
+```csharp
+var options = new RateLimiterStrategyOptions
+{
+    DefaultRateLimiterOptions = new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 100,
+        QueueLimit = 20
+    },
+    OnRejected = args =>
+    {
+        var retryAfter = args.Lease.TryGetMetadata(MetadataName.RetryAfter, out var metadata)
+            ? metadata
+            : null;
+        
+        Console.WriteLine($"Rate limited. Retry after: {retryAfter}");
+        return default;
+    }
+};
+```
+
+### RateLimiterArguments
+
+Arguments passed to the rate limiter delegate.
+
+```csharp
+public readonly struct RateLimiterArguments
+{
+    public ResilienceContext Context { get; }
+}
+```
+
+**Example:**
+
+```csharp
+RateLimiter = args =>
+{
+    // Access the resilience context
+    var operationKey = args.Context.OperationKey;
+    return myLimiter.AcquireAsync(cancellationToken: args.Context.CancellationToken);
+}
+```
+
+### OnRateLimiterRejectedArguments
+
+Arguments passed to the `OnRejected` callback.
+
+```csharp
+public readonly struct OnRateLimiterRejectedArguments
+{
+    public ResilienceContext Context { get; }
+    public RateLimitLease Lease { get; }
+}
+```
+
+#### Properties
+
+**Context**
+
+The resilience context associated with the execution.
+
+- **Type:** `ResilienceContext`
+
+**Lease**
+
+The lease that was rejected by the rate limiter (has no permits).
+
+- **Type:** `RateLimitLease`
+
+**Example:**
+
+```csharp
+OnRejected = args =>
+{
+    if (args.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+    {
+        Console.WriteLine($"Retry after: {retryAfter}");
+    }
+    return default;
+}
+```
+
+## Exceptions
+
+### RateLimiterRejectedException
+
+Exception thrown when a rate limiter rejects an execution.
+
+```csharp
+public sealed class RateLimiterRejectedException : ExecutionRejectedException
+{
+    public TimeSpan? RetryAfter { get; }
+}
+```
+
+#### Properties
+
+**RetryAfter**
+
+The amount of time to wait before retrying again. Retrieved from the `RateLimitLease` metadata.
+
+- **Type:** `TimeSpan?`
+- **Default:** `null`
+
+#### Constructors
+
+```csharp
+public RateLimiterRejectedException()
+public RateLimiterRejectedException(TimeSpan retryAfter)
+public RateLimiterRejectedException(string message)
+public RateLimiterRejectedException(string message, TimeSpan retryAfter)
+public RateLimiterRejectedException(string message, Exception inner)
+public RateLimiterRejectedException(string message, TimeSpan retryAfter, Exception inner)
+```
+
+**Example:**
+
+```csharp
+try
+{
+    await pipeline.ExecuteAsync(async ct =>
+    {
+        // Your code here
+    });
+}
+catch (RateLimiterRejectedException ex)
+{
+    if (ex.RetryAfter.HasValue)
+    {
+        Console.WriteLine($"Rate limited. Retry after {ex.RetryAfter.Value}");
+        await Task.Delay(ex.RetryAfter.Value);
+    }
+}
+```
+
+## Usage Examples
+
+### Basic Concurrency Limiting
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddConcurrencyLimiter(permitLimit: 10, queueLimit: 5)
+    .Build();
+
+// Execute work through the pipeline
+await pipeline.ExecuteAsync(async ct =>
+{
+    // Only 10 concurrent executions allowed
+    await DoWorkAsync(ct);
+});
+```
+
+### Custom Rate Limiter
+
+```csharp
+var slidingWindow = new SlidingWindowRateLimiter(new SlidingWindowRateLimiterOptions
+{
+    PermitLimit = 100,
+    Window = TimeSpan.FromMinutes(1),
+    SegmentsPerWindow = 6
+});
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(slidingWindow)
+    .Build();
+```
+
+### Rate Limiting with Rejection Handling
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        DefaultRateLimiterOptions = new ConcurrencyLimiterOptions
+        {
+            PermitLimit = 50,
+            QueueLimit = 100
+        },
+        OnRejected = args =>
+        {
+            logger.LogWarning("Request rate limited for operation: {OperationKey}",
+                args.Context.OperationKey);
+            
+            if (args.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+            {
+                args.Context.Properties.Set(new ResiliencePropertyKey<TimeSpan>("RetryAfter"), retryAfter);
+            }
+            
+            return default;
+        }
+    })
+    .Build();
+```
+
+### Per-User Rate Limiting
+
+```csharp
+var userLimiters = new ConcurrentDictionary<string, RateLimiter>();
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRateLimiter(new RateLimiterStrategyOptions
+    {
+        RateLimiter = args =>
+        {
+            var userId = args.Context.Properties.GetValue(
+                new ResiliencePropertyKey<string>("UserId"), 
+                "anonymous");
+            
+            var limiter = userLimiters.GetOrAdd(userId, _ => 
+                new ConcurrencyLimiter(new ConcurrencyLimiterOptions
+                {
+                    PermitLimit = 10,
+                    QueueLimit = 5
+                }));
+            
+            return limiter.AcquireAsync(cancellationToken: args.Context.CancellationToken);
+        }
+    })
+    .Build();
+
+// Use with context
+var context = ResilienceContextPool.Shared.Get();
+context.Properties.Set(new ResiliencePropertyKey<string>("UserId"), "user123");
+
+await pipeline.ExecuteAsync(async ct =>
+{
+    // Rate limited per user
+}, context);
+```
+
+### Combining with Dependency Injection
+
+```csharp
+services.AddResiliencePipeline("api-limiter", builder =>
+{
+    builder.AddConcurrencyLimiter(new ConcurrencyLimiterOptions
+    {
+        PermitLimit = 100,
+        QueueLimit = 50
+    });
+});
+
+// Use in a service
+public class ApiService
+{
+    private readonly ResiliencePipeline _pipeline;
+    
+    public ApiService(ResiliencePipelineProvider<string> provider)
+    {
+        _pipeline = provider.GetPipeline("api-limiter");
+    }
+    
+    public async Task<string> CallApiAsync()
+    {
+        return await _pipeline.ExecuteAsync(async ct =>
+        {
+            return await httpClient.GetStringAsync("/api/data", ct);
+        });
+    }
+}
+```
+
+## See Also
+
+- [System.Threading.RateLimiting](https://learn.microsoft.com/en-us/dotnet/api/system.threading.ratelimiting)
+- [Rate Limiting Middleware in ASP.NET Core](https://learn.microsoft.com/en-us/aspnet/core/performance/rate-limit)
+- [Polly Documentation](https://www.pollydocs.org/)

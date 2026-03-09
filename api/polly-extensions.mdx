@@ -1,0 +1,385 @@
+---
+title: Polly.Extensions
+description: Dependency injection extensions for registering and managing resilience pipelines
+---
+
+The `Polly.Extensions` package provides integration with Microsoft.Extensions.DependencyInjection, enabling you to register and manage resilience pipelines through the service collection.
+
+## Installation
+
+```bash
+dotnet add package Polly.Extensions
+```
+
+## Core Extension Methods
+
+### AddResiliencePipeline
+
+Registers a resilience pipeline with the service collection.
+
+```csharp
+public static IServiceCollection AddResiliencePipeline<TKey>(
+    this IServiceCollection services,
+    TKey key,
+    Action<ResiliencePipelineBuilder> configure)
+    where TKey : notnull
+```
+
+<ParamField path="services" type="IServiceCollection" required>
+  The service collection to add the resilience pipeline to
+</ParamField>
+
+<ParamField path="key" type="TKey" required>
+  The key used to identify the resilience pipeline
+</ParamField>
+
+<ParamField path="configure" type="Action<ResiliencePipelineBuilder>" required>
+  An action that configures the resilience pipeline
+</ParamField>
+
+**Returns:** The updated `IServiceCollection` with the registered resilience pipeline.
+
+**Example:**
+
+```csharp
+services.AddResiliencePipeline("my-pipeline", builder =>
+{
+    builder.AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1)
+    });
+});
+```
+
+### AddResiliencePipeline (with context)
+
+Registers a resilience pipeline with access to the service provider and pipeline context.
+
+```csharp
+public static IServiceCollection AddResiliencePipeline<TKey>(
+    this IServiceCollection services,
+    TKey key,
+    Action<ResiliencePipelineBuilder, AddResiliencePipelineContext<TKey>> configure)
+    where TKey : notnull
+```
+
+<ParamField path="services" type="IServiceCollection" required>
+  The service collection to add the resilience pipeline to
+</ParamField>
+
+<ParamField path="key" type="TKey" required>
+  The key used to identify the resilience pipeline
+</ParamField>
+
+<ParamField path="configure" type="Action<ResiliencePipelineBuilder, AddResiliencePipelineContext<TKey>>" required>
+  An action that configures the resilience pipeline with access to context
+</ParamField>
+
+**Example:**
+
+```csharp
+services.AddResiliencePipeline("my-pipeline", (builder, context) =>
+{
+    var options = context.GetOptions<MyOptions>();
+    builder.AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = options.MaxRetries
+    });
+    context.EnableReloads<MyOptions>();
+});
+```
+
+### AddResiliencePipeline&lt;TResult&gt;
+
+Registers a resilience pipeline that handles a specific result type.
+
+```csharp
+public static IServiceCollection AddResiliencePipeline<TKey, TResult>(
+    this IServiceCollection services,
+    TKey key,
+    Action<ResiliencePipelineBuilder<TResult>> configure)
+    where TKey : notnull
+```
+
+<ParamField path="services" type="IServiceCollection" required>
+  The service collection to add the resilience pipeline to
+</ParamField>
+
+<ParamField path="key" type="TKey" required>
+  The key used to identify the resilience pipeline
+</ParamField>
+
+<ParamField path="configure" type="Action<ResiliencePipelineBuilder<TResult>>" required>
+  An action that configures the resilience pipeline for the specific result type
+</ParamField>
+
+**Example:**
+
+```csharp
+services.AddResiliencePipeline<string, HttpResponseMessage>("http-pipeline", builder =>
+{
+    builder.AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(response => !response.IsSuccessStatusCode)
+    });
+});
+```
+
+### AddResiliencePipelines
+
+Allows deferred addition of one or more resilience pipelines.
+
+```csharp
+public static IServiceCollection AddResiliencePipelines<TKey>(
+    this IServiceCollection services,
+    Action<AddResiliencePipelinesContext<TKey>> configure)
+    where TKey : notnull
+```
+
+<ParamField path="services" type="IServiceCollection" required>
+  The service collection to add resilience pipelines to
+</ParamField>
+
+<ParamField path="configure" type="Action<AddResiliencePipelinesContext<TKey>>" required>
+  An action that allows configuration of multiple resilience pipelines
+</ParamField>
+
+**Example:**
+
+```csharp
+services.AddResiliencePipelines<string>(context =>
+{
+    context.AddResiliencePipeline("pipeline-1", (builder, ctx) =>
+    {
+        builder.AddRetry(new RetryStrategyOptions());
+    });
+    
+    context.AddResiliencePipeline("pipeline-2", (builder, ctx) =>
+    {
+        builder.AddTimeout(TimeSpan.FromSeconds(30));
+    });
+});
+```
+
+### AddResiliencePipelineRegistry
+
+Registers `ResiliencePipelineRegistry<TKey>` and `ResiliencePipelineProvider<TKey>` to the service collection.
+
+```csharp
+public static IServiceCollection AddResiliencePipelineRegistry<TKey>(
+    this IServiceCollection services)
+    where TKey : notnull
+```
+
+<ParamField path="services" type="IServiceCollection" required>
+  The service collection to add the registry to
+</ParamField>
+
+**Example:**
+
+```csharp
+services.AddResiliencePipelineRegistry<string>();
+```
+
+## Context Classes
+
+### AddResiliencePipelineContext&lt;TKey&gt;
+
+Represents the context for adding a resilience pipeline with the specified key.
+
+#### Properties
+
+```csharp
+public TKey PipelineKey { get; }
+public IServiceProvider ServiceProvider { get; }
+```
+
+#### Methods
+
+**EnableReloads&lt;TOptions&gt;**
+
+Enables dynamic reloading of the resilience pipeline whenever the specified options are changed.
+
+```csharp
+public void EnableReloads<TOptions>(string? name = null)
+```
+
+<ParamField path="name" type="string?">
+  The named options, if any. If null, global options are listened to
+</ParamField>
+
+**GetOptions&lt;TOptions&gt;**
+
+Gets the options identified by name.
+
+```csharp
+public TOptions GetOptions<TOptions>(string? name = null)
+```
+
+<ParamField path="name" type="string?">
+  The options name, if any. If null, global options are returned
+</ParamField>
+
+**OnPipelineDisposed**
+
+Registers a callback that is called when the pipeline instance is disposed.
+
+```csharp
+public void OnPipelineDisposed(Action callback)
+```
+
+<ParamField path="callback" type="Action" required>
+  The callback delegate to invoke on disposal
+</ParamField>
+
+### AddResiliencePipelinesContext&lt;TKey&gt;
+
+Represents the context for configuring multiple resilience pipelines.
+
+#### Properties
+
+```csharp
+public IServiceProvider ServiceProvider { get; }
+```
+
+#### Methods
+
+**AddResiliencePipeline**
+
+Adds a resilience pipeline to the registry.
+
+```csharp
+public void AddResiliencePipeline(
+    TKey key,
+    Action<ResiliencePipelineBuilder, AddResiliencePipelineContext<TKey>> configure)
+
+public void AddResiliencePipeline<TResult>(
+    TKey key,
+    Action<ResiliencePipelineBuilder<TResult>, AddResiliencePipelineContext<TKey>> configure)
+```
+
+## ResiliencePipelineProvider&lt;TKey&gt;
+
+Provides access to resilience pipelines that are registered by key.
+
+### Methods
+
+**GetPipeline**
+
+Retrieves a resilience pipeline using the specified key.
+
+```csharp
+public virtual ResiliencePipeline GetPipeline(TKey key)
+```
+
+<ParamField path="key" type="TKey" required>
+  The key used to identify the resilience pipeline
+</ParamField>
+
+**Returns:** The resilience pipeline associated with the specified key.
+
+**Throws:** `KeyNotFoundException` when no resilience pipeline is found for the specified key.
+
+**GetPipeline&lt;TResult&gt;**
+
+Retrieves a generic resilience pipeline using the specified key.
+
+```csharp
+public virtual ResiliencePipeline<TResult> GetPipeline<TResult>(TKey key)
+```
+
+<ParamField path="key" type="TKey" required>
+  The key used to identify the resilience pipeline
+</ParamField>
+
+**Returns:** The generic resilience pipeline associated with the specified key.
+
+**TryGetPipeline**
+
+Tries to get a resilience pipeline using the specified key.
+
+```csharp
+public abstract bool TryGetPipeline(TKey key, out ResiliencePipeline? pipeline)
+public abstract bool TryGetPipeline<TResult>(TKey key, out ResiliencePipeline<TResult>? pipeline)
+```
+
+**Returns:** `true` if the pipeline was found, `false` otherwise.
+
+## Telemetry Options
+
+### TelemetryOptions
+
+Configures the telemetry that is produced by resilience strategies.
+
+```csharp
+public class TelemetryOptions
+{
+    public ICollection<TelemetryListener> TelemetryListeners { get; }
+    public ILoggerFactory LoggerFactory { get; set; }
+    public ICollection<MeteringEnricher> MeteringEnrichers { get; }
+    public Func<ResilienceContext, object?, object?> ResultFormatter { get; set; }
+    public Func<SeverityProviderArguments, ResilienceEventSeverity>? SeverityProvider { get; set; }
+}
+```
+
+**Example:**
+
+```csharp
+services.Configure<TelemetryOptions>(options =>
+{
+    options.LoggerFactory = loggerFactory;
+    options.TelemetryListeners.Add(myCustomListener);
+});
+```
+
+## Usage Example
+
+Complete example of registering and using resilience pipelines:
+
+```csharp
+// Register pipelines
+services.AddResiliencePipeline("my-pipeline", (builder, context) =>
+{
+    var options = context.GetOptions<MyOptions>();
+    
+    builder
+        .AddRetry(new RetryStrategyOptions
+        {
+            MaxRetryAttempts = options.MaxRetries,
+            Delay = TimeSpan.FromSeconds(1)
+        })
+        .AddTimeout(TimeSpan.FromSeconds(30));
+    
+    // Enable dynamic reloading when options change
+    context.EnableReloads<MyOptions>();
+});
+
+// Retrieve and use pipeline
+public class MyService
+{
+    private readonly ResiliencePipeline _pipeline;
+    
+    public MyService(ResiliencePipelineProvider<string> pipelineProvider)
+    {
+        _pipeline = pipelineProvider.GetPipeline("my-pipeline");
+    }
+    
+    public async Task<string> ExecuteAsync()
+    {
+        return await _pipeline.ExecuteAsync(async ct =>
+        {
+            // Your code here
+            return "result";
+        });
+    }
+}
+```
+
+## See Also
+
+- [Polly Core Documentation](https://www.pollydocs.org/)
+- [Dependency Injection in .NET](https://learn.microsoft.com/en-us/dotnet/core/extensions/dependency-injection)
+- [Options Pattern in .NET](https://learn.microsoft.com/en-us/dotnet/core/extensions/options)

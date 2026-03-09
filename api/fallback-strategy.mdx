@@ -1,0 +1,146 @@
+---
+title: Fallback Strategy
+description: API reference for Polly's fallback resilience strategy
+---
+
+The fallback strategy provides an alternative value or action when an operation fails.
+
+## FallbackStrategyOptions
+
+Configures the fallback resilience strategy.
+
+```csharp
+public class FallbackStrategyOptions<TResult> : ResilienceStrategyOptions
+```
+
+### Properties
+
+<ParamField path="ShouldHandle" type="Func<FallbackPredicateArguments<TResult>, ValueTask<bool>>" required>
+  A predicate that determines whether the fallback should be executed for a given outcome.
+  
+  Default: Falls back on any exception except `OperationCanceledException`.
+</ParamField>
+
+<ParamField path="FallbackAction" type="Func<FallbackActionArguments<TResult>, ValueTask<Outcome<TResult>>>" required>
+  The fallback action to execute when the `ShouldHandle` predicate evaluates to `true`.
+  
+  This property is required and must be set.
+</ParamField>
+
+<ParamField path="OnFallback" type="Func<OnFallbackArguments<TResult>, ValueTask>?" default="null">
+  An event delegate raised when a fallback happens.
+</ParamField>
+
+## Extension Methods
+
+Add fallback strategies to a resilience pipeline:
+
+```csharp
+public static ResiliencePipelineBuilder<TResult> AddFallback<TResult>(
+    this ResiliencePipelineBuilder<TResult> builder,
+    FallbackStrategyOptions<TResult> options)
+```
+
+## Usage Examples
+
+### Simple Fallback Value
+
+```csharp
+var fallbackOptions = new FallbackStrategyOptions<string>
+{
+    ShouldHandle = args => new ValueTask<bool>(args.Outcome.Exception is not null),
+    FallbackAction = args =>
+    {
+        return new ValueTask<Outcome<string>>(
+            Outcome.FromResult("Fallback value")
+        );
+    },
+    OnFallback = args =>
+    {
+        Console.WriteLine("Fallback executed!");
+        return ValueTask.CompletedTask;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder<string>()
+    .AddFallback(fallbackOptions)
+    .Build();
+
+var result = await pipeline.ExecuteAsync(async ct =>
+{
+    return await FetchDataAsync(ct);
+});
+```
+
+### Fallback with Alternative Action
+
+```csharp
+var fallbackOptions = new FallbackStrategyOptions<UserData>
+{
+    ShouldHandle = args => new ValueTask<bool>(
+        args.Outcome.Exception is HttpRequestException
+    ),
+    FallbackAction = async args =>
+    {
+        // Try an alternative data source
+        var cachedData = await GetCachedUserDataAsync(args.Context.CancellationToken);
+        return Outcome.FromResult(cachedData);
+    }
+};
+```
+
+### Conditional Fallback Based on Result
+
+```csharp
+var fallbackOptions = new FallbackStrategyOptions<ApiResponse>
+{
+    ShouldHandle = args => new ValueTask<bool>(
+        args.Outcome.Result?.StatusCode == 503 // Service Unavailable
+    ),
+    FallbackAction = args =>
+    {
+        var fallbackResponse = new ApiResponse
+        {
+            StatusCode = 200,
+            Data = GetDefaultData()
+        };
+        return new ValueTask<Outcome<ApiResponse>>(
+            Outcome.FromResult(fallbackResponse)
+        );
+    }
+};
+```
+
+## FallbackActionArguments
+
+Arguments passed to the `FallbackAction` delegate.
+
+```csharp
+public readonly struct FallbackActionArguments<TResult>
+{
+    public ResilienceContext Context { get; }
+    public Outcome<TResult> Outcome { get; }
+}
+```
+
+## Outcome
+
+The `Outcome<TResult>` type represents either a successful result or an exception:
+
+```csharp
+// Create from result
+var outcome = Outcome.FromResult(myValue);
+
+// Create from exception
+var outcome = Outcome.FromException<TResult>(myException);
+
+// Check outcome
+if (outcome.Exception is not null)
+{
+    // Handle exception
+}
+else
+{
+    var result = outcome.Result;
+}
+```

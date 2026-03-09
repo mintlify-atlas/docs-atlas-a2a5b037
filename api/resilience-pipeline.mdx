@@ -1,0 +1,595 @@
+---
+title: "ResiliencePipeline"
+description: "Execute user-provided callbacks with resilience strategies"
+---
+
+## Overview
+
+The `ResiliencePipeline` class is used to execute user-provided callbacks with configured resilience strategies. It provides a unified API for synchronous and asynchronous callbacks, with and without return values.
+
+## Static Properties
+
+<ResponseField name="Empty" type="ResiliencePipeline">
+  A resilience pipeline that executes the user-provided callback without any additional logic.
+</ResponseField>
+
+## Synchronous Execute Methods
+
+### Execute (Action)
+
+```csharp
+public void Execute(Action callback)
+```
+
+Executes the specified callback.
+
+<ParamField path="callback" type="Action" required>
+  The user-provided callback.
+</ParamField>
+
+<ResponseField name="Throws" type="ArgumentNullException">
+  Thrown when `callback` is null.
+</ResponseField>
+
+### Execute (Action\<CancellationToken\>)
+
+```csharp
+public void Execute(
+    Action<CancellationToken> callback,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified callback with a cancellation token.
+
+<ParamField path="callback" type="Action<CancellationToken>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+### Execute (Action\<TState\>)
+
+```csharp
+public void Execute<TState>(
+    Action<TState> callback,
+    TState state)
+```
+
+Executes the specified callback with state.
+
+<ParamField path="callback" type="Action<TState>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+### Execute (Action\<TState, CancellationToken\>)
+
+```csharp
+public void Execute<TState>(
+    Action<TState, CancellationToken> callback,
+    TState state,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified callback with state and cancellation token.
+
+<ParamField path="callback" type="Action<TState, CancellationToken>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+### Execute (Action\<ResilienceContext\>)
+
+```csharp
+public void Execute(
+    Action<ResilienceContext> callback,
+    ResilienceContext context)
+```
+
+Executes the specified callback with a resilience context.
+
+<ParamField path="callback" type="Action<ResilienceContext>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+### Execute (Action\<ResilienceContext, TState\>)
+
+```csharp
+public void Execute<TState>(
+    Action<ResilienceContext, TState> callback,
+    ResilienceContext context,
+    TState state)
+```
+
+Executes the specified callback with a resilience context and state.
+
+<ParamField path="callback" type="Action<ResilienceContext, TState>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+## Synchronous Execute Methods with Result
+
+### Execute (Func\<TResult\>)
+
+```csharp
+public TResult Execute<TResult>(Func<TResult> callback)
+```
+
+Executes the specified callback and returns a result.
+
+<ParamField path="callback" type="Func<TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+### Execute (Func\<CancellationToken, TResult\>)
+
+```csharp
+public TResult Execute<TResult>(
+    Func<CancellationToken, TResult> callback,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified callback with a cancellation token and returns a result.
+
+<ParamField path="callback" type="Func<CancellationToken, TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+### Execute (Func\<TState, TResult\>)
+
+```csharp
+public TResult Execute<TResult, TState>(
+    Func<TState, TResult> callback,
+    TState state)
+```
+
+Executes the specified callback with state and returns a result.
+
+<ParamField path="callback" type="Func<TState, TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+### Execute (Func\<TState, CancellationToken, TResult\>)
+
+```csharp
+public TResult Execute<TResult, TState>(
+    Func<TState, CancellationToken, TResult> callback,
+    TState state,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified callback with state and cancellation token and returns a result.
+
+<ParamField path="callback" type="Func<TState, CancellationToken, TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+### Execute (Func\<ResilienceContext, TResult\>)
+
+```csharp
+public TResult Execute<TResult>(
+    Func<ResilienceContext, TResult> callback,
+    ResilienceContext context)
+```
+
+Executes the specified callback with a resilience context and returns a result.
+
+<ParamField path="callback" type="Func<ResilienceContext, TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+### Execute (Func\<ResilienceContext, TState, TResult\>)
+
+```csharp
+public TResult Execute<TResult, TState>(
+    Func<ResilienceContext, TState, TResult> callback,
+    ResilienceContext context,
+    TState state)
+```
+
+Executes the specified callback with a resilience context and state and returns a result.
+
+<ParamField path="callback" type="Func<ResilienceContext, TState, TResult>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="TResult">
+  The result of the callback execution.
+</ResponseField>
+
+## Asynchronous Execute Methods
+
+### ExecuteAsync (Func\<CancellationToken, ValueTask\>)
+
+```csharp
+public ValueTask ExecuteAsync(
+    Func<CancellationToken, ValueTask> callback,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified asynchronous callback.
+
+<ParamField path="callback" type="Func<CancellationToken, ValueTask>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask">
+  A task that represents the asynchronous execution.
+</ResponseField>
+
+### ExecuteAsync (Func\<TState, CancellationToken, ValueTask\>)
+
+```csharp
+public ValueTask ExecuteAsync<TState>(
+    Func<TState, CancellationToken, ValueTask> callback,
+    TState state,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified asynchronous callback with state.
+
+<ParamField path="callback" type="Func<TState, CancellationToken, ValueTask>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask">
+  A task that represents the asynchronous execution.
+</ResponseField>
+
+### ExecuteAsync (Func\<ResilienceContext, ValueTask\>)
+
+```csharp
+public ValueTask ExecuteAsync(
+    Func<ResilienceContext, ValueTask> callback,
+    ResilienceContext context)
+```
+
+Executes the specified asynchronous callback with a resilience context.
+
+<ParamField path="callback" type="Func<ResilienceContext, ValueTask>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask">
+  A task that represents the asynchronous execution.
+</ResponseField>
+
+### ExecuteAsync (Func\<ResilienceContext, TState, ValueTask\>)
+
+```csharp
+public ValueTask ExecuteAsync<TState>(
+    Func<ResilienceContext, TState, ValueTask> callback,
+    ResilienceContext context,
+    TState state)
+```
+
+Executes the specified asynchronous callback with a resilience context and state.
+
+<ParamField path="callback" type="Func<ResilienceContext, TState, ValueTask>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask">
+  A task that represents the asynchronous execution.
+</ResponseField>
+
+## Asynchronous Execute Methods with Result
+
+### ExecuteAsync (Func\<CancellationToken, ValueTask\<TResult\>\>)
+
+```csharp
+public ValueTask<TResult> ExecuteAsync<TResult>(
+    Func<CancellationToken, ValueTask<TResult>> callback,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified asynchronous callback and returns a result.
+
+<ParamField path="callback" type="Func<CancellationToken, ValueTask<TResult>>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask<TResult>">
+  A task that represents the asynchronous execution and returns the result.
+</ResponseField>
+
+### ExecuteAsync (Func\<TState, CancellationToken, ValueTask\<TResult\>\>)
+
+```csharp
+public ValueTask<TResult> ExecuteAsync<TResult, TState>(
+    Func<TState, CancellationToken, ValueTask<TResult>> callback,
+    TState state,
+    CancellationToken cancellationToken = default)
+```
+
+Executes the specified asynchronous callback with state and returns a result.
+
+<ParamField path="callback" type="Func<TState, CancellationToken, ValueTask<TResult>>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ParamField path="cancellationToken" type="CancellationToken">
+  The cancellation token associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask<TResult>">
+  A task that represents the asynchronous execution and returns the result.
+</ResponseField>
+
+### ExecuteAsync (Func\<ResilienceContext, ValueTask\<TResult\>\>)
+
+```csharp
+public ValueTask<TResult> ExecuteAsync<TResult>(
+    Func<ResilienceContext, ValueTask<TResult>> callback,
+    ResilienceContext context)
+```
+
+Executes the specified asynchronous callback with a resilience context and returns a result.
+
+<ParamField path="callback" type="Func<ResilienceContext, ValueTask<TResult>>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask<TResult>">
+  A task that represents the asynchronous execution and returns the result.
+</ResponseField>
+
+### ExecuteAsync (Func\<ResilienceContext, TState, ValueTask\<TResult\>\>)
+
+```csharp
+public ValueTask<TResult> ExecuteAsync<TResult, TState>(
+    Func<ResilienceContext, TState, ValueTask<TResult>> callback,
+    ResilienceContext context,
+    TState state)
+```
+
+Executes the specified asynchronous callback with a resilience context and state and returns a result.
+
+<ParamField path="callback" type="Func<ResilienceContext, TState, ValueTask<TResult>>" required>
+  The user-provided callback.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask<TResult>">
+  A task that represents the asynchronous execution and returns the result.
+</ResponseField>
+
+## Advanced Execute Methods
+
+### ExecuteOutcomeAsync
+
+```csharp
+public ValueTask<Outcome<TResult>> ExecuteOutcomeAsync<TResult, TState>(
+    Func<ResilienceContext, TState, ValueTask<Outcome<TResult>>> callback,
+    ResilienceContext context,
+    TState state)
+```
+
+Executes the specified outcome-based callback for advanced, low-allocation scenarios.
+
+<ParamField path="callback" type="Func<ResilienceContext, TState, ValueTask<Outcome<TResult>>>" required>
+  The user-provided callback that returns an `Outcome<TResult>`.
+</ParamField>
+
+<ParamField path="context" type="ResilienceContext" required>
+  The context associated with the callback.
+</ParamField>
+
+<ParamField path="state" type="TState">
+  The state associated with the callback.
+</ParamField>
+
+<ResponseField name="Returns" type="ValueTask<Outcome<TResult>>">
+  A task that represents the asynchronous execution and returns the outcome.
+</ResponseField>
+
+<Warning>
+  The user callback must not throw an exception. Wrap your code and return `Outcome<TResult>`: use `Outcome.FromResult<TResult>(TResult)` on success, or `Outcome.FromException<TResult>(Exception)` on failure. Do not rely on strategies to catch your exceptions.
+</Warning>
+
+## ResiliencePipeline\<T\>
+
+A generic version of `ResiliencePipeline` that constrains result types to `T`.
+
+### Static Properties
+
+<ResponseField name="Empty" type="ResiliencePipeline<T>">
+  A resilience pipeline that executes the user-provided callback without any additional logic.
+</ResponseField>
+
+### Execute Methods
+
+All execute methods from `ResiliencePipeline` are available with an additional constraint that `TResult : T`.
+
+## Example Usage
+
+```csharp
+using Polly;
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions())
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
+
+// Simple synchronous execution
+pipeline.Execute(() => 
+{
+    Console.WriteLine("Executing with resilience");
+});
+
+// Synchronous execution with result
+var result = pipeline.Execute(() => 
+{
+    return "Hello, World!";
+});
+
+// Asynchronous execution
+await pipeline.ExecuteAsync(async ct => 
+{
+    await Task.Delay(100, ct);
+});
+
+// Asynchronous execution with result
+var asyncResult = await pipeline.ExecuteAsync(async ct => 
+{
+    await Task.Delay(100, ct);
+    return "Async Result";
+});
+
+// With state to avoid allocations
+var state = new MyState { Value = 42 };
+await pipeline.ExecuteAsync(
+    static (s, ct) => s.DoWorkAsync(ct),
+    state);
+
+// Using ResilienceContext for advanced scenarios
+var context = ResilienceContextPool.Shared.Get();
+context.OperationKey = "my-operation";
+
+try
+{
+    await pipeline.ExecuteAsync(
+        static (ctx, state) => state.DoWorkAsync(ctx.CancellationToken),
+        context,
+        state);
+}
+finally
+{
+    ResilienceContextPool.Shared.Return(context);
+}
+```
+
+## Generic Pipeline Example
+
+```csharp
+using Polly;
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => !r.IsSuccessStatusCode)
+    })
+    .Build();
+
+var response = await pipeline.ExecuteAsync(async ct =>
+{
+    return await httpClient.GetAsync(url, ct);
+});
+```

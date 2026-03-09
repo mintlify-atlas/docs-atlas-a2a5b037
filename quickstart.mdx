@@ -1,80 +1,235 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get up and running with Polly in minutes
+icon: rocket
 ---
 
-## Get started in three steps
+This quickstart guide will help you create your first resilience pipeline with Polly and execute code with automatic retry and timeout handling.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+- .NET 6.0 or later
+- Basic understanding of C# and async/await
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+## Step 1: Install Polly.Core
 
-### Step 2: Deploy your changes
+<Steps>
+  <Step title="Add the package">
+    Install the Polly.Core package using the .NET CLI:
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    dotnet add package Polly.Core
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Verify installation">
+    The package should now appear in your project file:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```xml
+    <PackageReference Include="Polly.Core" Version="8.*" />
+    ```
+  </Step>
+</Steps>
 
-### Step 3: Go live
+## Step 2: Create your first resilience pipeline
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+Create a resilience pipeline that combines retry and timeout strategies:
 
-## Next steps
+```csharp
+using Polly;
 
-Now that you have your docs running, explore these key features:
+// Create an instance of builder that exposes various extensions for adding resilience strategies
+ResiliencePipeline pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions()) // Add retry using the default options
+    .AddTimeout(TimeSpan.FromSeconds(10)) // Add 10 seconds timeout
+    .Build(); // Builds the resilience pipeline
 
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+// Execute the pipeline asynchronously
+await pipeline.ExecuteAsync(static async token => 
+{ 
+    // Your custom logic goes here
+    var response = await httpClient.GetAsync("https://api.example.com/data", token);
+    return response;
+}, cancellationToken);
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The pipeline executes strategies in the order they are added. In this example, timeout wraps retry, which wraps your callback.
 </Note>
+
+## Step 3: Configure advanced retry behavior
+
+Customize the retry strategy with exponential backoff and jitter:
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1),
+        BackoffType = DelayBackoffType.Exponential,
+        UseJitter = true,
+        OnRetry = args =>
+        {
+            Console.WriteLine($"Retry attempt {args.AttemptNumber}");
+            return ValueTask.CompletedTask;
+        }
+    })
+    .AddTimeout(TimeSpan.FromSeconds(10))
+    .Build();
+```
+
+## Step 4: Use dependency injection (optional)
+
+For ASP.NET Core and other DI-enabled applications, install Polly.Extensions:
+
+<CodeGroup>
+```bash .NET CLI
+dotnet add package Polly.Extensions
+```
+
+```bash Package Manager
+Install-Package Polly.Extensions
+```
+</CodeGroup>
+
+Then register your resilience pipeline:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+
+var services = new ServiceCollection();
+
+// Define a resilience pipeline with the name "my-pipeline"
+services.AddResiliencePipeline("my-pipeline", builder =>
+{
+    builder
+        .AddRetry(new RetryStrategyOptions())
+        .AddTimeout(TimeSpan.FromSeconds(10));
+});
+
+// Build the service provider
+var serviceProvider = services.BuildServiceProvider();
+
+// Retrieve a ResiliencePipelineProvider that dynamically creates and caches the resilience pipelines
+var pipelineProvider = serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>();
+
+// Retrieve your resilience pipeline using the name it was registered with
+ResiliencePipeline pipeline = pipelineProvider.GetPipeline("my-pipeline");
+
+// Alternatively, you can use keyed services to retrieve the resilience pipeline
+pipeline = serviceProvider.GetRequiredKeyedService<ResiliencePipeline>("my-pipeline");
+
+// Execute the pipeline
+await pipeline.ExecuteAsync(static async token =>
+{
+    // Your custom logic goes here
+});
+```
+
+## Complete example: HTTP client with resilience
+
+Here's a complete example showing how to use Polly with HttpClient in an ASP.NET Core application:
+
+```csharp
+using Microsoft.Extensions.DependencyInjection;
+using Polly;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Register HttpClient with Polly resilience pipeline
+builder.Services.AddHttpClient("ResilientClient")
+    .AddResilienceHandler("my-pipeline", builder =>
+    {
+        builder
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromSeconds(1),
+                BackoffType = DelayBackoffType.Exponential,
+                UseJitter = true
+            })
+            .AddCircuitBreaker(new CircuitBreakerStrategyOptions
+            {
+                FailureRatio = 0.5,
+                MinimumThroughput = 10,
+                SamplingDuration = TimeSpan.FromSeconds(30),
+                BreakDuration = TimeSpan.FromSeconds(30)
+            })
+            .AddTimeout(TimeSpan.FromSeconds(10));
+    });
+
+var app = builder.Build();
+
+// Use the HttpClient in a controller or service
+app.MapGet("/fetch-data", async (IHttpClientFactory factory) =>
+{
+    var client = factory.CreateClient("ResilientClient");
+    var response = await client.GetAsync("https://api.example.com/data");
+    var content = await response.Content.ReadAsStringAsync();
+    return Results.Ok(content);
+});
+
+app.Run();
+```
+
+## What's next?
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/resilience-pipelines">
+    Learn about resilience pipelines and strategies in depth
+  </Card>
+  <Card title="Resilience Strategies" icon="shield" href="/strategies/overview">
+    Explore all available resilience strategies
+  </Card>
+  <Card title="Dependency Injection" icon="plug" href="/advanced/dependency-injection">
+    Advanced DI patterns and configuration
+  </Card>
+  <Card title="Telemetry" icon="chart-line" href="/advanced/telemetry">
+    Monitor your resilience pipelines
+  </Card>
+</CardGroup>
+
+## Common patterns
+
+### Generic pipelines for typed results
+
+Use `ResiliencePipeline<TResult>` when you need to handle results:
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<HttpRequestException>()
+            .HandleResult(r => !r.IsSuccessStatusCode)
+    })
+    .Build();
+
+HttpResponseMessage response = await pipeline.ExecuteAsync(
+    async token => await httpClient.GetAsync("https://api.example.com", token),
+    cancellationToken);
+```
+
+### Multiple independent pipelines
+
+Create different pipelines for different scenarios:
+
+```csharp
+// Fast-failing pipeline for user-facing operations
+var userPipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions { MaxRetryAttempts = 2 })
+    .AddTimeout(TimeSpan.FromSeconds(3))
+    .Build();
+
+// Resilient pipeline for background operations
+var backgroundPipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions { MaxRetryAttempts = 5 })
+    .AddTimeout(TimeSpan.FromSeconds(30))
+    .Build();
+```
+
+<Tip>
+  Pipeline instances are lightweight and can be reused across multiple executions. Create them once and store them for the lifetime of your application.
+</Tip>

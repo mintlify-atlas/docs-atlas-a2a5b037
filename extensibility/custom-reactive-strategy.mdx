@@ -1,0 +1,311 @@
+---
+title: Custom Reactive Strategy
+description: Learn how to implement a reactive resilience strategy that handles specific results
+---
+
+## Overview
+
+Reactive strategies handle specific exceptions thrown or results returned by callbacks. This guide demonstrates how to create a **Result Reporting Strategy** that listens for specific results and reports them to other components.
+
+<Info>
+Reactive strategies inherit from `ResilienceStrategy<T>` and use predicates to determine whether to handle an outcome.
+</Info>
+
+## Implementation
+
+### Strategy Class
+
+Reactive strategies should be internal and not exposed in the public API. Configure them through extension methods and options.
+
+```csharp
+// Strategies should be internal and not exposed in the library's public API.
+// Use extension methods and options to configure the strategy.
+internal sealed class ResultReportingResilienceStrategy<T> : ResilienceStrategy<T>
+{
+    private readonly Func<ResultReportingPredicateArguments<T>, ValueTask<bool>> _shouldHandle;
+    private readonly Func<OnReportResultArguments<T>, ValueTask> _onReportResult;
+    private readonly ResilienceStrategyTelemetry _telemetry;
+
+    public ResultReportingResilienceStrategy(
+        Func<ResultReportingPredicateArguments<T>, ValueTask<bool>> shouldHandle,
+        Func<OnReportResultArguments<T>, ValueTask> onReportResult,
+        ResilienceStrategyTelemetry telemetry)
+    {
+        _shouldHandle = shouldHandle;
+        _onReportResult = onReportResult;
+        _telemetry = telemetry;
+    }
+
+    protected override async ValueTask<Outcome<T>> ExecuteCore<TState>(
+        Func<ResilienceContext, TState, ValueTask<Outcome<T>>> callback,
+        ResilienceContext context,
+        TState state)
+    {
+        // Execute the given callback and adhere to the ContinueOnCapturedContext property value.
+        Outcome<T> outcome = await callback(context, state).ConfigureAwait(context.ContinueOnCapturedContext);
+
+        // Check if the outcome should be reported using the "ShouldHandle" predicate.
+        if (await _shouldHandle(new ResultReportingPredicateArguments<T>(context, outcome)).ConfigureAwait(context.ContinueOnCapturedContext))
+        {
+            // Bundle information about the event into arguments.
+            var args = new OnReportResultArguments<T>(context, outcome);
+
+            // Report this as a resilience event with information severity level to the telemetry infrastructure.
+            _telemetry.Report(
+                new ResilienceEvent(ResilienceEventSeverity.Information, "ResultReported"),
+                context,
+                outcome,
+                args);
+
+            // Call the "OnReportResult" callback.
+            await _onReportResult(args).ConfigureAwait(context.ContinueOnCapturedContext);
+        }
+
+        return outcome;
+    }
+}
+```
+
+<Note>
+Reactive strategies use the `ShouldHandle` predicate to decide whether to handle the outcome of a user callback.
+</Note>
+
+### Predicate Arguments
+
+The predicate arguments follow the `{StrategyName}PredicateArguments` naming pattern:
+
+```csharp
+public readonly struct ResultReportingPredicateArguments<TResult>
+{
+    public ResultReportingPredicateArguments(ResilienceContext context, Outcome<TResult> outcome)
+    {
+        Context = context;
+        Outcome = outcome;
+    }
+
+    // Always include the "Context" property in the arguments.
+    public ResilienceContext Context { get; }
+
+    // Always have the "Outcome" property in reactive arguments.
+    public Outcome<TResult> Outcome { get; }
+}
+```
+
+<Warning>
+Reactive arguments must **always** contain both `Context` and `Outcome` properties.
+</Warning>
+
+### Event Arguments
+
+For reporting outcomes, define event-specific arguments:
+
+```csharp
+public readonly struct OnReportResultArguments<TResult>
+{
+    public OnReportResultArguments(ResilienceContext context, Outcome<TResult> outcome)
+    {
+        Context = context;
+        Outcome = outcome;
+    }
+
+    // Always include the "Context" property in the arguments.
+    public ResilienceContext Context { get; }
+
+    // Always have the "Outcome" property in reactive arguments.
+    public Outcome<TResult> Outcome { get; }
+}
+```
+
+## Options
+
+<Steps>
+  <Step title="Define Generic Options">
+    Create a public options class that inherits from `ResilienceStrategyOptions`:
+
+    ```csharp
+    public class ResultReportingStrategyOptions<TResult> : ResilienceStrategyOptions
+    {
+        public ResultReportingStrategyOptions()
+        {
+            // Assign a default name to the options for more detailed telemetry insights.
+            Name = "ResultReporting";
+        }
+
+        // Options for reactive strategies should always include a "ShouldHandle" delegate.
+        // Set a sensible default when possible. Here, we handle all exceptions.
+        public Func<ResultReportingPredicateArguments<TResult>, ValueTask<bool>> ShouldHandle { get; set; } = args =>
+        {
+            return new ValueTask<bool>(args.Outcome.Exception is not null);
+        };
+
+        // This illustrates an event delegate. Note that the arguments struct carries the same name as the delegate but with an "Arguments" suffix.
+        // The event follows the async convention and must be set by the user.
+        //
+        // The [Required] attribute enforces the consumer to specify this property, used when some properties do not have sensible defaults and are required.
+        [Required]
+        public Func<OnReportResultArguments<TResult>, ValueTask>? OnReportResult { get; set; }
+    }
+    ```
+  </Step>
+
+  <Step title="Add Non-Generic Support (Optional)">
+    For non-generic pipelines, derive from the generic options:
+
+    ```csharp
+    // Simply derive from the generic options, using 'object' as the result type.
+    // This allows the strategy to manage all results.
+    public class ResultReportingStrategyOptions : ResultReportingStrategyOptions<object>
+    {
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+Using options as a public contract ensures flexibility and allows you to add new members without breaking changes.
+</Tip>
+
+## Extension Methods
+
+Create extension methods to register the strategy with the pipeline builder:
+
+```csharp
+public static class ResultReportingResilienceStrategyBuilderExtensions
+{
+    // Add extensions for the generic builder.
+    // Extensions should return the builder to support a fluent API.
+    public static ResiliencePipelineBuilder<TResult> AddResultReporting<TResult>(
+        this ResiliencePipelineBuilder<TResult> builder,
+        ResultReportingStrategyOptions<TResult> options)
+    {
+        // Add the strategy through the AddStrategy method. This method accepts a factory delegate
+        // and automatically validates the options.
+        return builder.AddStrategy(
+            context =>
+            {
+                // The "context" provides various properties for the strategy's use.
+                // In this case, we simply use the "Telemetry" property and pass it to the strategy.
+                // The ShouldHandle and OnReportResult values are sourced from the options.
+                var strategy = new ResultReportingResilienceStrategy<TResult>(
+                    options.ShouldHandle,
+                    options.OnReportResult!,
+                    context.Telemetry);
+
+                return strategy;
+            },
+            options);
+    }
+
+    // Optionally, if suitable for the strategy, add support for non-generic builders.
+    // Observe the use of the non-generic ResultReportingStrategyOptions.
+    public static ResiliencePipelineBuilder AddResultReporting(
+        this ResiliencePipelineBuilder builder,
+        ResultReportingStrategyOptions options)
+    {
+        return builder.AddStrategy(
+            context =>
+            {
+                var strategy = new ResultReportingResilienceStrategy<object>(
+                    options.ShouldHandle,
+                    options.OnReportResult!,
+                    context.Telemetry);
+
+                return strategy;
+            },
+            options);
+    }
+}
+```
+
+## Usage Examples
+
+<CodeGroup>
+
+```csharp Generic Pipeline
+// Add reactive strategy to the builder
+new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddResultReporting(new ResultReportingStrategyOptions<HttpResponseMessage>
+    {
+        // Define what outcomes to handle
+        ShouldHandle = args => args.Outcome switch
+        {
+            { Exception: { } } => PredicateResult.True(),
+            { Result.StatusCode: HttpStatusCode.InternalServerError } => PredicateResult.True(),
+            _ => PredicateResult.False()
+        },
+        OnReportResult = args =>
+        {
+            Console.WriteLine($"Result: {args.Outcome}");
+            return default;
+        }
+    });
+```
+
+```csharp Non-Generic Pipeline
+// You can also use the non-generic ResiliencePipelineBuilder to handle any kind of result.
+new ResiliencePipelineBuilder()
+    .AddResultReporting(new ResultReportingStrategyOptions
+    {
+        // Define what outcomes to handle
+        ShouldHandle = args => args.Outcome switch
+        {
+            { Exception: { } } => PredicateResult.True(),
+            { Result: HttpResponseMessage message } when message.StatusCode == HttpStatusCode.InternalServerError => PredicateResult.True(),
+            _ => PredicateResult.False()
+        },
+        OnReportResult = args =>
+        {
+            Console.WriteLine($"Result: {args.Outcome}");
+            return default;
+        }
+    });
+```
+
+</CodeGroup>
+
+## Key Takeaways
+
+<AccordionGroup>
+  <Accordion title="Strategy Implementation">
+    - Inherit from `ResilienceStrategy<T>`
+    - Keep the strategy class internal
+    - Use `ShouldHandle` predicate to determine if an outcome should be handled
+    - Report events using `ResilienceStrategyTelemetry`
+  </Accordion>
+
+  <Accordion title="Arguments">
+    - Always include `Context` and `Outcome` properties
+    - Use readonly structs for arguments
+    - Follow naming convention: `{DelegateName}Arguments`
+  </Accordion>
+
+  <Accordion title="Options">
+    - Inherit from `ResilienceStrategyOptions`
+    - Provide sensible defaults where possible
+    - Use validation attributes (e.g., `[Required]`)
+    - Support both generic and non-generic variants
+  </Accordion>
+
+  <Accordion title="Extension Methods">
+    - Return the builder to support fluent API
+    - Use `AddStrategy` method for registration
+    - Automatic validation of options
+  </Accordion>
+</AccordionGroup>
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Result Reporting Sample" icon="github" href="https://github.com/App-vNext/Polly/tree/main/samples/Extensibility/Reactive">
+    Complete working example from this guide
+  </Card>
+  <Card title="Retry Strategy Source" icon="code" href="https://github.com/App-vNext/Polly/tree/main/src/Polly.Core/Retry">
+    Built-in retry strategy implementation
+  </Card>
+  <Card title="Fallback Strategy Source" icon="code" href="https://github.com/App-vNext/Polly/tree/main/src/Polly.Core/Fallback">
+    Built-in fallback strategy implementation
+  </Card>
+  <Card title="Extensibility Overview" icon="book" href="/extensibility/overview">
+    Learn about extensibility basics
+  </Card>
+</CardGroup>

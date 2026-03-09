@@ -1,0 +1,409 @@
+---
+title: Timeout Strategy
+description: Ensure operations complete within a specified time limit or get cancelled
+---
+
+# Timeout Strategy
+
+The timeout **proactive** resilience strategy cancels the execution if it does not complete within the specified timeout period. If the execution is canceled by the timeout strategy, it throws a `TimeoutRejectedException`.
+
+<Warning>
+  It is crucial that your callback respects the cancellation token. If it does not, the callback will continue executing even after cancellation, thereby ignoring the timeout.
+</Warning>
+
+## When to Use Timeout
+
+Use the timeout strategy when:
+
+- Operations should not take longer than a specific duration
+- You want to prevent indefinite waiting for responses
+- Dealing with potentially slow or unresponsive services
+- Implementing SLA requirements with strict time limits
+- Protecting against resource exhaustion from long-running operations
+
+## Installation
+
+```bash
+dotnet add package Polly.Core
+```
+
+## Usage
+
+### Basic Timeout
+
+```csharp
+// Simple timeout of 3 seconds
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(TimeSpan.FromSeconds(3))
+    .Build();
+
+try
+{
+    await pipeline.ExecuteAsync(async ct => 
+    {
+        // Your operation that should complete within 3 seconds
+        await CallExternalServiceAsync(ct);
+    }, cancellationToken);
+}
+catch (TimeoutRejectedException)
+{
+    // Operation took too long
+    Console.WriteLine("Operation timed out");
+}
+```
+
+### Using TimeoutStrategyOptions
+
+```csharp
+var options = new TimeoutStrategyOptions
+{
+    Timeout = TimeSpan.FromSeconds(30),
+    OnTimeout = args =>
+    {
+        Console.WriteLine($"Timeout occurred after {args.Timeout}");
+        // Log, send metrics, etc.
+        return default;
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(options)
+    .Build();
+```
+
+### Dynamic Timeout
+
+```csharp
+var options = new TimeoutStrategyOptions
+{
+    TimeoutGenerator = static args =>
+    {
+        // Adjust timeout based on context
+        var isHighPriority = args.Context.Properties
+            .TryGetValue(new ResiliencePropertyKey<bool>("IsHighPriority"), out var priority) 
+            && priority;
+        
+        var timeout = isHighPriority 
+            ? TimeSpan.FromSeconds(60) 
+            : TimeSpan.FromSeconds(10);
+        
+        return new ValueTask<TimeSpan>(timeout);
+    }
+};
+```
+
+### Timeout with Events
+
+```csharp
+var options = new TimeoutStrategyOptions
+{
+    Timeout = TimeSpan.FromSeconds(5),
+    OnTimeout = static args =>
+    {
+        var operationKey = args.Context.OperationKey;
+        Console.WriteLine($"{operationKey}: Execution timed out after {args.Timeout.TotalSeconds} seconds.");
+        
+        // Log to monitoring system
+        // Send alert
+        
+        return default;
+    }
+};
+```
+
+## Configuration Options
+
+<ParamField path="Timeout" type="TimeSpan" default="30 seconds">
+  Defines a fixed period within which the delegate should complete, otherwise it will be cancelled.
+</ParamField>
+
+<ParamField path="TimeoutGenerator" type="Func<TimeoutGeneratorArguments, ValueTask<TimeSpan>>" default="null">
+  Dynamically calculates the timeout period using runtime information. If set, the `Timeout` property is ignored.
+</ParamField>
+
+<ParamField path="OnTimeout" type="Func<OnTimeoutArguments, ValueTask>" default="null">
+  Invoked after the timeout occurred, just before throwing `TimeoutRejectedException`.
+</ParamField>
+
+## Important Considerations
+
+### Respecting Cancellation Tokens
+
+The timeout strategy relies on **co-operative cancellation**. Your callbacks must honor the cancellation token:
+
+<CodeGroup>
+```csharp Good Example
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(TimeSpan.FromSeconds(1))
+    .Build();
+
+await pipeline.ExecuteAsync(
+    static async innerToken => 
+    {
+        // ✅ Use the innerToken provided by the pipeline
+        await Task.Delay(TimeSpan.FromSeconds(3), innerToken);
+    },
+    outerToken);
+```
+
+```csharp Bad Example
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(TimeSpan.FromSeconds(1))
+    .Build();
+
+await pipeline.ExecuteAsync(
+    async innerToken => 
+    {
+        // ❌ Using outerToken instead of innerToken
+        await Task.Delay(TimeSpan.FromSeconds(3), outerToken);
+    },
+    outerToken);
+```
+</CodeGroup>
+
+<Note>
+  If the cancellation token is not respected, the callback will continue executing after the timeout, and the strategy will have to wait for it to complete before throwing `TimeoutRejectedException`.
+</Note>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always use the provided cancellation token">
+    Pass the cancellation token provided by Polly to all async operations. This ensures proper timeout behavior.
+    
+    ```csharp
+    await pipeline.ExecuteAsync(async ct => 
+    {
+        await httpClient.GetAsync(url, ct); // ✅ Pass ct
+        await Task.Delay(1000, ct);        // ✅ Pass ct
+    }, cancellationToken);
+    ```
+  </Accordion>
+  
+  <Accordion title="Set appropriate timeout values">
+    - Too short: operations fail unnecessarily
+    - Too long: defeats the purpose of timeout
+    
+    Consider your service's typical response times and add buffer for variance.
+  </Accordion>
+  
+  <Accordion title="Use dynamic timeouts for varying scenarios">
+    Use `TimeoutGenerator` when different operations or contexts require different timeout values.
+  </Accordion>
+  
+  <Accordion title="Combine with retry for comprehensive resilience">
+    Place timeout inside retry to ensure each retry attempt has its own timeout:
+    
+    ```csharp
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddRetry(new RetryStrategyOptions())
+        .AddTimeout(TimeSpan.FromSeconds(5))
+        .Build();
+    ```
+  </Accordion>
+  
+  <Accordion title="Log timeout events">
+    Use `OnTimeout` to log or send metrics when timeouts occur. This helps identify slow operations.
+  </Accordion>
+</AccordionGroup>
+
+## Examples
+
+### HTTP Request with Timeout
+
+```csharp
+var httpClient = new HttpClient();
+
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddTimeout(new TimeoutStrategyOptions
+    {
+        Timeout = TimeSpan.FromSeconds(10),
+        OnTimeout = args =>
+        {
+            Console.WriteLine($"HTTP request timed out after {args.Timeout}");
+            return default;
+        }
+    })
+    .Build();
+
+try
+{
+    var response = await pipeline.ExecuteAsync(async ct =>
+    {
+        return await httpClient.GetAsync("https://api.example.com/data", ct);
+    }, cancellationToken);
+    
+    Console.WriteLine($"Status: {response.StatusCode}");
+}
+catch (TimeoutRejectedException)
+{
+    Console.WriteLine("Request took too long");
+}
+```
+
+### Database Query with Timeout
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<List<Customer>>()
+    .AddTimeout(TimeSpan.FromSeconds(5))
+    .Build();
+
+var customers = await pipeline.ExecuteAsync(async ct =>
+{
+    await using var connection = new SqlConnection(connectionString);
+    await connection.OpenAsync(ct);
+    
+    await using var command = new SqlCommand("SELECT * FROM Customers", connection);
+    // Ensure the command respects the cancellation token
+    ct.Register(() => command.Cancel());
+    
+    var results = new List<Customer>();
+    await using var reader = await command.ExecuteReaderAsync(ct);
+    
+    while (await reader.ReadAsync(ct))
+    {
+        results.Add(new Customer
+        {
+            Id = reader.GetInt32(0),
+            Name = reader.GetString(1)
+        });
+    }
+    
+    return results;
+}, cancellationToken);
+```
+
+### Per-Operation Dynamic Timeouts
+
+```csharp
+var operationTimeoutKey = new ResiliencePropertyKey<TimeSpan>("OperationTimeout");
+
+var options = new TimeoutStrategyOptions
+{
+    TimeoutGenerator = args =>
+    {
+        // Get timeout from context or use default
+        var timeout = args.Context.Properties.GetValue(
+            operationTimeoutKey, 
+            TimeSpan.FromSeconds(30));
+        
+        return new ValueTask<TimeSpan>(timeout);
+    }
+};
+
+var pipeline = new ResiliencePipelineBuilder().AddTimeout(options).Build();
+
+// Use with custom timeout
+var context = ResilienceContextPool.Shared.Get();
+context.Properties.Set(operationTimeoutKey, TimeSpan.FromSeconds(5));
+
+try
+{
+    await pipeline.ExecuteAsync(
+        async (ctx, ct) => await SlowOperationAsync(ct),
+        context,
+        cancellationToken);
+}
+finally
+{
+    ResilienceContextPool.Shared.Return(context);
+}
+```
+
+### Timeout with Retry
+
+```csharp
+// Each retry attempt has its own 5-second timeout
+// Total time could be up to (3 attempts × 5 seconds) + retry delays
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        MaxRetryAttempts = 3,
+        Delay = TimeSpan.FromSeconds(1),
+        ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+            .Handle<TimeoutRejectedException>()
+            .Handle<HttpRequestException>()
+    })
+    .AddTimeout(TimeSpan.FromSeconds(5))
+    .Build();
+
+var response = await pipeline.ExecuteAsync(async ct =>
+{
+    return await httpClient.GetAsync(url, ct);
+}, cancellationToken);
+```
+
+### Overall Timeout for Retries
+
+```csharp
+// Entire retry sequence must complete within 15 seconds
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddTimeout(TimeSpan.FromSeconds(15))  // Outer timeout
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        MaxRetryAttempts = 5,
+        Delay = TimeSpan.FromSeconds(2)
+    })
+    .AddTimeout(TimeSpan.FromSeconds(3))   // Inner timeout per attempt
+    .Build();
+```
+
+## OnTimeout vs Try-Catch
+
+<CodeGroup>
+```csharp Using OnTimeout
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(new TimeoutStrategyOptions
+    {
+        Timeout = TimeSpan.FromSeconds(2),
+        OnTimeout = args =>
+        {
+            Console.WriteLine("Timeout occurred");
+            // Access Context and Timeout values
+            return default;
+        }
+    })
+    .Build();
+
+await pipeline.ExecuteAsync(Operation, cancellationToken);
+```
+
+```csharp Using Try-Catch
+var pipeline = new ResiliencePipelineBuilder()
+    .AddTimeout(TimeSpan.FromSeconds(2))
+    .Build();
+
+try
+{
+    await pipeline.ExecuteAsync(Operation, cancellationToken);
+}
+catch (TimeoutRejectedException)
+{
+    Console.WriteLine("Timeout occurred");
+}
+```
+</CodeGroup>
+
+<Note>
+  `OnTimeout` is called before the exception is thrown. This is useful when combining with retry strategy, as the retry might handle the exception. If you use try-catch, you might not catch the exception if retry succeeds on a subsequent attempt.
+</Note>
+
+<Accordion title="What happens if my operation ignores the cancellation token?">
+  The timeout strategy will wait for your operation to complete before throwing `TimeoutRejectedException`. This defeats the purpose of the timeout. Always respect the cancellation token in your callbacks.
+</Accordion>
+
+<Accordion title="Can I use different timeouts for different operations?">
+  Yes! Use `TimeoutGenerator` to dynamically calculate timeouts based on context properties, operation key, or any other runtime information.
+</Accordion>
+
+<Accordion title="Does timeout affect the original cancellation token?">
+  The timeout strategy wraps the incoming cancellation token with a new one. If the original token is canceled, the timeout strategy honors it without throwing `TimeoutRejectedException`.
+</Accordion>
+
+<Accordion title="Should timeout be inside or outside retry?">
+  It depends:
+  - **Inside retry** (retry → timeout): Each attempt gets its own timeout
+  - **Outside retry** (timeout → retry): The entire retry sequence must complete within the timeout
+  
+  You can also use both for maximum control.
+</Accordion>

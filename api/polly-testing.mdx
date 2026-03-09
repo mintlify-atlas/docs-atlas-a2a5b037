@@ -1,0 +1,413 @@
+---
+title: Polly.Testing
+description: Testing utilities for inspecting and validating resilience pipelines
+---
+
+The `Polly.Testing` package provides utilities for testing resilience pipelines, allowing you to inspect the structure and configuration of your pipelines in unit tests.
+
+## Installation
+
+```bash
+dotnet add package Polly.Testing
+```
+
+## Extension Methods
+
+### GetPipelineDescriptor
+
+Retrieves a descriptor that describes the structure and strategies of a resilience pipeline.
+
+```csharp
+public static ResiliencePipelineDescriptor GetPipelineDescriptor(
+    this ResiliencePipeline pipeline)
+```
+
+<ParamField path="pipeline" type="ResiliencePipeline" required>
+  The pipeline instance to describe
+</ParamField>
+
+**Returns:** A `ResiliencePipelineDescriptor` containing information about the pipeline.
+
+**Example:**
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder()
+    .AddRetry(new RetryStrategyOptions
+    {
+        MaxRetryAttempts = 3
+    })
+    .AddTimeout(TimeSpan.FromSeconds(30))
+    .Build();
+
+var descriptor = pipeline.GetPipelineDescriptor();
+
+Assert.Equal(2, descriptor.Strategies.Count);
+Assert.IsType<RetryResilienceStrategy>(descriptor.Strategies[0].StrategyInstance);
+Assert.IsType<TimeoutResilienceStrategy>(descriptor.Strategies[1].StrategyInstance);
+```
+
+### GetPipelineDescriptor&lt;TResult&gt;
+
+Retrieves a descriptor for a generic resilience pipeline.
+
+```csharp
+public static ResiliencePipelineDescriptor GetPipelineDescriptor<TResult>(
+    this ResiliencePipeline<TResult> pipeline)
+```
+
+<ParamField path="pipeline" type="ResiliencePipeline<TResult>" required>
+  The generic pipeline instance to describe
+</ParamField>
+
+**Returns:** A `ResiliencePipelineDescriptor` containing information about the pipeline.
+
+**Example:**
+
+```csharp
+var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+    .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+    {
+        MaxRetryAttempts = 3
+    })
+    .Build();
+
+var descriptor = pipeline.GetPipelineDescriptor();
+
+Assert.Single(descriptor.Strategies);
+```
+
+## Descriptor Classes
+
+### ResiliencePipelineDescriptor
+
+Describes the structure of a resilience pipeline.
+
+```csharp
+public sealed class ResiliencePipelineDescriptor
+{
+    public IReadOnlyList<ResilienceStrategyDescriptor> Strategies { get; }
+    public ResilienceStrategyDescriptor FirstStrategy { get; }
+    public bool IsReloadable { get; }
+}
+```
+
+#### Properties
+
+**Strategies**
+
+Gets the strategies the pipeline is composed of.
+
+- **Type:** `IReadOnlyList<ResilienceStrategyDescriptor>`
+
+**FirstStrategy**
+
+Gets the first strategy of the pipeline. This is a convenience property equivalent to `Strategies[0]`.
+
+- **Type:** `ResilienceStrategyDescriptor`
+
+**IsReloadable**
+
+Gets a value indicating whether the resilience pipeline is reloadable (i.e., supports dynamic reloading).
+
+- **Type:** `bool`
+
+**Example:**
+
+```csharp
+var descriptor = pipeline.GetPipelineDescriptor();
+
+foreach (var strategy in descriptor.Strategies)
+{
+    Console.WriteLine($"Strategy: {strategy.StrategyInstance.GetType().Name}");
+    if (strategy.Options != null)
+    {
+        Console.WriteLine($"Options: {strategy.Options.Name}");
+    }
+}
+
+if (descriptor.IsReloadable)
+{
+    Console.WriteLine("Pipeline supports dynamic reloading");
+}
+```
+
+### ResilienceStrategyDescriptor
+
+Provides information about an individual resilience strategy within a pipeline.
+
+```csharp
+public sealed class ResilienceStrategyDescriptor
+{
+    public ResilienceStrategyOptions? Options { get; }
+    public object StrategyInstance { get; }
+}
+```
+
+#### Properties
+
+**Options**
+
+Gets the options used by the resilience strategy, if any.
+
+- **Type:** `ResilienceStrategyOptions?`
+- **Default:** `null` if the strategy was not created with options
+
+**StrategyInstance**
+
+Gets the strategy instance. This is the actual strategy object that executes the resilience logic.
+
+- **Type:** `object`
+
+**Example:**
+
+```csharp
+var descriptor = pipeline.GetPipelineDescriptor();
+var firstStrategy = descriptor.FirstStrategy;
+
+if (firstStrategy.Options is RetryStrategyOptions retryOptions)
+{
+    Assert.Equal(3, retryOptions.MaxRetryAttempts);
+}
+
+Assert.IsType<RetryResilienceStrategy>(firstStrategy.StrategyInstance);
+```
+
+## Testing Patterns
+
+### Verifying Pipeline Composition
+
+Test that your pipeline contains the expected strategies in the correct order.
+
+```csharp
+[Fact]
+public void Pipeline_ShouldContainExpectedStrategies()
+{
+    // Arrange
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddRetry(new RetryStrategyOptions { MaxRetryAttempts = 3 })
+        .AddCircuitBreaker(new CircuitBreakerStrategyOptions())
+        .AddTimeout(TimeSpan.FromSeconds(30))
+        .Build();
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+
+    // Assert
+    Assert.Equal(3, descriptor.Strategies.Count);
+    Assert.IsType<RetryResilienceStrategy>(descriptor.Strategies[0].StrategyInstance);
+    Assert.IsType<CircuitBreakerResilienceStrategy>(descriptor.Strategies[1].StrategyInstance);
+    Assert.IsType<TimeoutResilienceStrategy>(descriptor.Strategies[2].StrategyInstance);
+}
+```
+
+### Verifying Strategy Options
+
+Test that strategies are configured with the correct options.
+
+```csharp
+[Fact]
+public void RetryStrategy_ShouldHaveCorrectConfiguration()
+{
+    // Arrange
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddRetry(new RetryStrategyOptions
+        {
+            MaxRetryAttempts = 5,
+            Delay = TimeSpan.FromSeconds(2),
+            BackoffType = DelayBackoffType.Exponential
+        })
+        .Build();
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+    var retryOptions = descriptor.FirstStrategy.Options as RetryStrategyOptions;
+
+    // Assert
+    Assert.NotNull(retryOptions);
+    Assert.Equal(5, retryOptions.MaxRetryAttempts);
+    Assert.Equal(TimeSpan.FromSeconds(2), retryOptions.Delay);
+    Assert.Equal(DelayBackoffType.Exponential, retryOptions.BackoffType);
+}
+```
+
+### Testing Generic Pipelines
+
+Test generic pipelines that handle specific result types.
+
+```csharp
+[Fact]
+public void HttpPipeline_ShouldHandleHttpResponseMessage()
+{
+    // Arrange
+    var pipeline = new ResiliencePipelineBuilder<HttpResponseMessage>()
+        .AddRetry(new RetryStrategyOptions<HttpResponseMessage>
+        {
+            MaxRetryAttempts = 3,
+            ShouldHandle = new PredicateBuilder<HttpResponseMessage>()
+                .HandleResult(r => !r.IsSuccessStatusCode)
+        })
+        .Build();
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+
+    // Assert
+    Assert.Single(descriptor.Strategies);
+    var options = descriptor.FirstStrategy.Options as RetryStrategyOptions;
+    Assert.NotNull(options);
+    Assert.Equal(3, options.MaxRetryAttempts);
+}
+```
+
+### Testing Reloadable Pipelines
+
+Verify that pipelines registered with dynamic reloading are marked as reloadable.
+
+```csharp
+[Fact]
+public void ReloadablePipeline_ShouldBeMarkedAsReloadable()
+{
+    // Arrange
+    var services = new ServiceCollection();
+    services.Configure<MyOptions>(options => options.MaxRetries = 3);
+    
+    services.AddResiliencePipeline("test", (builder, context) =>
+    {
+        var options = context.GetOptions<MyOptions>();
+        builder.AddRetry(new RetryStrategyOptions
+        {
+            MaxRetryAttempts = options.MaxRetries
+        });
+        context.EnableReloads<MyOptions>();
+    });
+
+    var serviceProvider = services.BuildServiceProvider();
+    var provider = serviceProvider.GetRequiredService<ResiliencePipelineProvider<string>>();
+    var pipeline = provider.GetPipeline("test");
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+
+    // Assert
+    Assert.True(descriptor.IsReloadable);
+}
+```
+
+### Testing Strategy Instance Types
+
+Access the actual strategy instance for more detailed testing.
+
+```csharp
+[Fact]
+public void RateLimiter_ShouldUseCorrectLimiterType()
+{
+    // Arrange
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddConcurrencyLimiter(permitLimit: 10, queueLimit: 5)
+        .Build();
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+    var strategyInstance = descriptor.FirstStrategy.StrategyInstance;
+
+    // Assert
+    Assert.IsType<RateLimiterResilienceStrategy>(strategyInstance);
+}
+```
+
+### Testing Multiple Strategies
+
+Iterate through all strategies in a complex pipeline.
+
+```csharp
+[Fact]
+public void ComplexPipeline_ShouldContainAllStrategies()
+{
+    // Arrange
+    var pipeline = new ResiliencePipelineBuilder()
+        .AddRetry(new RetryStrategyOptions { Name = "retry" })
+        .AddCircuitBreaker(new CircuitBreakerStrategyOptions { Name = "cb" })
+        .AddTimeout(new TimeoutStrategyOptions { Name = "timeout" })
+        .AddConcurrencyLimiter(10)
+        .Build();
+
+    // Act
+    var descriptor = pipeline.GetPipelineDescriptor();
+
+    // Assert
+    Assert.Equal(4, descriptor.Strategies.Count);
+    
+    var strategyNames = descriptor.Strategies
+        .Select(s => s.Options?.Name)
+        .ToList();
+    
+    Assert.Contains("retry", strategyNames);
+    Assert.Contains("cb", strategyNames);
+    Assert.Contains("timeout", strategyNames);
+}
+```
+
+## Integration Testing
+
+Combine testing utilities with integration tests:
+
+```csharp
+public class PipelineIntegrationTests
+{
+    [Fact]
+    public async Task Pipeline_ShouldRetryAndSucceed()
+    {
+        // Arrange
+        var attemptCount = 0;
+        var pipeline = new ResiliencePipelineBuilder()
+            .AddRetry(new RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                Delay = TimeSpan.FromMilliseconds(10)
+            })
+            .Build();
+
+        // Verify configuration first
+        var descriptor = pipeline.GetPipelineDescriptor();
+        Assert.Single(descriptor.Strategies);
+        
+        var retryOptions = descriptor.FirstStrategy.Options as RetryStrategyOptions;
+        Assert.Equal(3, retryOptions.MaxRetryAttempts);
+
+        // Act
+        var result = await pipeline.ExecuteAsync(async ct =>
+        {
+            attemptCount++;
+            if (attemptCount < 3)
+            {
+                throw new InvalidOperationException("Temporary failure");
+            }
+            return "success";
+        });
+
+        // Assert
+        Assert.Equal("success", result);
+        Assert.Equal(3, attemptCount);
+    }
+}
+```
+
+## Best Practices
+
+1. **Test Pipeline Structure**: Always verify that your pipeline contains the expected strategies in the correct order.
+
+2. **Verify Options**: Check that strategies are configured with the correct options values.
+
+3. **Test Reloadability**: If using dynamic reloading, verify that the `IsReloadable` property is `true`.
+
+4. **Use Descriptive Strategy Names**: Set the `Name` property on strategy options to make testing easier.
+
+5. **Combine with Integration Tests**: Use descriptors to verify configuration, then test actual execution behavior.
+
+6. **Type Safety**: Use pattern matching or type checks to safely access specific option types.
+
+## See Also
+
+- [xUnit Testing Framework](https://xunit.net/)
+- [NUnit Testing Framework](https://nunit.org/)
+- [Polly Documentation](https://www.pollydocs.org/)
